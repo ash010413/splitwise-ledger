@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
+    <key>MintoBackendURL</key>
+    <string>$(MINTO_BACKEND_URL)</string>
     <key>NSLocalNetworkUsageDescription</key>
     <string>Connect to your development summary backend on your local network when you request an AI summary.</string>
     <key>NSAppTransportSecurity</key>

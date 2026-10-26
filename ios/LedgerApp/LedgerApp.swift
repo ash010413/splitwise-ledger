@@ -487,7 +487,7 @@ struct AISummaryView: View {
               var components = URLComponents(string: backendURL),
               ["https", "http"].contains(components.scheme ?? ""), components.host != nil,
               components.user == nil, components.password == nil, components.query == nil,
-              components.fragment == nil else { error = "Summaries are temporarily unavailable. Please try again later."; return }
+              components.fragment == nil else { error = "AI summaries aren’t connected on this device yet."; return }
         components.path = components.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         components.path = "/" + (components.path.isEmpty ? "analysis" : components.path + "/analysis")
         guard let url = components.url else { error = "Summaries are temporarily unavailable. Please try again later."; return }

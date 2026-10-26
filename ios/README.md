@@ -66,6 +66,13 @@ not a production authentication scheme. Gemini remains server-side in every buil
 
 For a real iPhone, localhost refers to the phone. Use an HTTPS-hosted backend, or for
 local development a reachable Mac `.local` hostname on the same trusted network.
+Run `.venv/bin/python tools/configure_ios_backend.py` once to create the ignored
+`ios/Development.local.xcconfig`. The Debug target includes this file via
+`Configuration.xcconfig` and expands the non-secret endpoint into `MintoBackendURL`.
+Rebuild the phone app after changing it. Run Uvicorn with `--host 0.0.0.0` so the
+phone can reach the protected backend, and keep both devices on the same network.
+The Mac must remain awake and the backend must be running. This configuration file
+contains no tokens. Existing device Keychain sessions are preserved across updates.
 The app has a local-network purpose string without disabling HTTPS checks for public
 hosts. Never expose the development server to the public Internet.
 

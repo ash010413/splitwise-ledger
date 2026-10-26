@@ -13,3 +13,4 @@ DerivedData/
 xcuserdata/
 *.xcuserstate
 .DS_Store
+ios/Development.local.xcconfig

@@ -1,0 +1,3 @@
+// Non-secret, machine-specific endpoint for physical-device development.
+// Gemini credentials stay exclusively in the backend .env.
+#include? "Development.local.xcconfig"
