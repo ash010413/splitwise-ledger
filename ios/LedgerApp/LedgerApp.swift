@@ -22,7 +22,7 @@ final class LedgerModel {
             selectedMonthID = snapshot.months.last?.id ?? selectedMonthID
         }
     }
-    var month: MonthSnapshot? { data?.months.first { $0.id == selectedMonthID } }
+    var month: MonthSnapshot? { data?.summary(for: selectedMonthID) }
     var previous: MonthSnapshot? {
         guard let months = data?.months, let index = months.firstIndex(where: { $0.id == selectedMonthID }), index > 0 else { return nil }
         return months[index - 1]
@@ -35,7 +35,7 @@ final class LedgerModel {
             let snapshot = try await repository.load()
             guard !snapshot.months.isEmpty else { throw SheetError.invalid("The summary has no months.") }
             data = snapshot
-            if !snapshot.months.contains(where: { $0.id == selectedMonthID }) {
+            if selectedMonthID != "all" && !snapshot.months.contains(where: { $0.id == selectedMonthID }) {
                 selectedMonthID = snapshot.months.last!.id
             }
             error = nil
@@ -74,7 +74,6 @@ struct LedgerApp: App {
 struct DashboardView: View {
     @Bindable var model: LedgerModel
     @State private var selectedCategory: SpendCategory?
-    @State private var chartMonth: String?
     @State private var showsAI = false
     var body: some View {
         NavigationStack {
@@ -130,7 +129,7 @@ struct DashboardView: View {
                 }.disabled(model.month == nil).padding(.trailing, 22).padding(.bottom, 8)
             }
             .sheet(isPresented: $showsAI) {
-                if let month = model.month { AISummaryView(month: month, previous: model.previous, fetchedAt: model.data?.fetchedAt) }
+                if let month = model.month { AISummaryView(month: month, previous: model.previous, fetchedAt: model.data?.fetchedAt, coveredMonths: model.data?.months.map(\.id) ?? []) }
             }
             .navigationTitle("Minto").navigationBarTitleDisplayMode(.inline)
             .sheet(item: $selectedCategory) { category in
@@ -140,9 +139,10 @@ struct DashboardView: View {
     }
     private var monthSelector: some View {
         HStack {
-            Text("Monthly overview").font(.headline)
+            Text(model.selectedMonthID == "all" ? "All-time overview" : "Monthly overview").font(.headline)
             Spacer()
             Picker("Month", selection: $model.selectedMonthID) {
+                Text("All months").tag("all")
                 ForEach(model.data?.months ?? []) { month in Text("\(month.label) \(month.year)").tag(month.id) }
             }.tint(teal).accessibilityIdentifier("monthPicker")
         }
@@ -166,7 +166,7 @@ struct DashboardView: View {
                 Text("Calendar-month totals · periods may be incomplete")
                     .font(.caption2).foregroundStyle(.white.opacity(0.65))
             } else {
-                Text("Your share across all categories").font(.subheadline).foregroundStyle(.white.opacity(0.75))
+                Text(month.id == "all" ? "Across all \(model.data?.months.count ?? 0) loaded months" : "Your share across all categories").font(.subheadline).foregroundStyle(.white.opacity(0.75))
             }
         }.padding(25).frame(maxWidth: .infinity, alignment: .leading)
             .foregroundStyle(.white).background(ink, in: RoundedRectangle(cornerRadius: 28))
@@ -176,14 +176,11 @@ struct DashboardView: View {
             HStack { Text("The bigger picture").font(.headline); Spacer(); Text("Tap a bar").font(.caption).foregroundStyle(.secondary) }
             Chart(model.data?.months ?? []) { month in
                 BarMark(x: .value("Month", month.shortLabel), y: .value("Spending", month.total.chartValue), width: .ratio(0.48))
-                    .foregroundStyle(month.id == model.selectedMonthID ? teal : teal.opacity(0.18))
+                    .foregroundStyle(model.selectedMonthID == "all" || month.id == model.selectedMonthID ? teal : teal.opacity(0.18))
                     .cornerRadius(7)
                     .accessibilityLabel(month.label).accessibilityValue(month.total.usd)
             }
-            .chartXSelection(value: $chartMonth)
-            .onChange(of: chartMonth) { _, value in
-                if let month = model.data?.months.first(where: { $0.shortLabel == value }) { model.selectedMonthID = month.id }
-            }
+            .modifier(MonthChartSelection(months: model.data?.months ?? [], selectedMonthID: $model.selectedMonthID))
             .chartYAxis { AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) { value in
                 AxisGridLine().foregroundStyle(ink.opacity(0.06))
                 AxisValueLabel { if let amount = value.as(Double.self) { Text("$\(Int(amount / 1000))k").font(.caption2) } }
@@ -191,7 +188,7 @@ struct DashboardView: View {
             .chartXAxis { AxisMarks { _ in AxisValueLabel().font(.caption) } }
             .frame(height: 150)
             if let selected = model.month {
-                Text("\(selected.label) \(selected.year) · \(selected.total.usd)")
+                Text("\(selected.displayLabel) · \(selected.total.usd)")
                     .font(.caption.weight(.semibold)).foregroundStyle(teal)
             }
 
@@ -199,16 +196,54 @@ struct DashboardView: View {
     }
     private func insightCard(_ month: MonthSnapshot) -> some View {
         let biggest = SpendCategory.allCases.max { month.amount($0) < month.amount($1) } ?? .home
+        let scope = month.id == "all" ? "spending across all loaded months" : "\(month.label)’s spending"
         return HStack(alignment: .top, spacing: 13) {
             Image(systemName: "lightbulb").font(.title3).foregroundStyle(teal)
             VStack(alignment: .leading, spacing: 6) {
                 Text("A closer look").font(.subheadline.bold())
-                Text("\(biggest.rawValue) accounts for \((month.amount(biggest) / max(month.total, 1)).chartValue.formatted(.percent.precision(.fractionLength(0)))) of \(month.label)’s spending.")
+                Text("\(biggest.rawValue) accounts for \((month.amount(biggest) / max(month.total, 1)).chartValue.formatted(.percent.precision(.fractionLength(0)))) of \(scope).")
                     .font(.subheadline).foregroundStyle(.secondary)
                 Text("Calculated from your sheet summary").font(.caption2).foregroundStyle(.secondary)
             }
         }.padding(18).frame(maxWidth: .infinity, alignment: .leading)
             .background(teal.opacity(0.08), in: RoundedRectangle(cornerRadius: 20))
+    }
+}
+
+/// A spatial tap works immediately, including repeat taps after changing the picker.
+/// It doesn't install a drag recognizer that competes with the surrounding ScrollView.
+private struct MonthChartSelection: ViewModifier {
+    let months: [MonthSnapshot]
+    @Binding var selectedMonthID: String
+    func body(content: Content) -> some View {
+        content.chartOverlay { proxy in
+            GeometryReader { geometry in
+                Rectangle().fill(.clear).contentShape(Rectangle())
+                    .onTapGesture(coordinateSpace: .local) { location in
+                        guard let plotFrame = proxy.plotFrame else { return }
+                        let frame = geometry[plotFrame]
+                        guard frame.contains(location) else { return }
+                        let candidates = months.compactMap { month -> (String, Double)? in
+                            guard let center = proxy.position(forX: month.shortLabel) else { return nil }
+                            return (month.id, Double(center))
+                        }
+                        guard let index = ChartHitTesting.nearestIndex(
+                            at: Double(location.x - frame.minX), centers: candidates.map { $0.1 }
+                        ) else { return }
+                        selectedMonthID = candidates[index].0
+                    }
+                    .accessibilityHidden(true)
+            }
+        }
+        .accessibilityAdjustableAction { direction in
+            guard !months.isEmpty else { return }
+            let current = months.firstIndex { $0.id == selectedMonthID }
+            switch direction {
+            case .increment: selectedMonthID = months[min((current ?? -1) + 1, months.count - 1)].id
+            case .decrement: selectedMonthID = months[max((current ?? months.count) - 1, 0)].id
+            @unknown default: break
+            }
+        }
     }
 }
 
@@ -257,8 +292,7 @@ struct CategoryRow: View {
 
 struct CategoryDetail: View {
     let category: SpendCategory
-    let model: LedgerModel
-    @State private var chartMonth: String?
+    @Bindable var model: LedgerModel
     @Environment(\.dismiss) private var dismiss
     var body: some View {
         NavigationStack {
@@ -268,17 +302,15 @@ struct CategoryDetail: View {
                     Text(category.definition).font(.body).foregroundStyle(.secondary)
                     Text(model.month?.amount(category).usd ?? "$0.00")
                         .font(.system(.largeTitle, design: .rounded).bold())
-                    Text("\(model.month?.label ?? "") \(model.month?.year ?? "") · sheet summary").font(.subheadline).foregroundStyle(.secondary)
+                    Text("\(model.month?.displayLabel ?? "") · sheet summary").font(.subheadline).foregroundStyle(.secondary)
                     Chart(model.data?.months ?? []) { month in
                         BarMark(x: .value("Month", month.shortLabel), y: .value("Amount", month.amount(category).chartValue))
                             .foregroundStyle(teal).cornerRadius(5)
-                    }.chartXSelection(value: $chartMonth)
-                        .onChange(of: chartMonth) { _, value in
-                            if let month = model.data?.months.first(where: { $0.shortLabel == value }) { model.selectedMonthID = month.id }
-                        }.frame(height: 180)
+                    }.modifier(MonthChartSelection(months: model.data?.months ?? [], selectedMonthID: $model.selectedMonthID))
+                        .frame(height: 180)
                     Text("Tap a bar to view that month’s category amount.").font(.caption).foregroundStyle(teal)
                     ForEach(model.data?.months ?? []) { month in
-                        Button { model.selectedMonthID = month.id; chartMonth = month.shortLabel } label: {
+                        Button { model.selectedMonthID = month.id } label: {
                             HStack { Text("\(month.label) \(month.year)"); Spacer(); Text(month.amount(category).usd) }
                         }.foregroundStyle(month.id == model.selectedMonthID ? teal : ink).padding(.vertical, 5)
                     }
@@ -362,7 +394,7 @@ struct SettingsView: View {
             }.scrollContentBackground(.hidden).background(paper).navigationTitle("Settings")
                 .sheet(isPresented: $showsAI) {
                     if let month = model.month {
-                        AISummaryView(month: month, previous: model.previous, fetchedAt: model.data?.fetchedAt)
+                        AISummaryView(month: month, previous: model.previous, fetchedAt: model.data?.fetchedAt, coveredMonths: model.data?.months.map(\.id) ?? [])
                     }
                 }
         }.tint(teal)
@@ -423,8 +455,10 @@ private struct AnalysisPayload: Encodable {
     struct Month: Encodable {
         let month: String
         let amounts: [String: String]
-        init(_ source: MonthSnapshot) {
+        let covered_months: [String]
+        init(_ source: MonthSnapshot, coveredMonths: [String] = []) {
             month = source.id
+            covered_months = source.id == "all" ? coveredMonths : []
             amounts = Dictionary(uniqueKeysWithValues: SpendCategory.allCases.map {
                 ($0.rawValue, NSDecimalNumber(decimal: source.amount($0)).stringValue)
             })
@@ -439,6 +473,7 @@ struct AISummaryView: View {
     let month: MonthSnapshot
     let previous: MonthSnapshot?
     let fetchedAt: Date?
+    var coveredMonths: [String] = []
     @Environment(\.dismiss) private var dismiss
     @State private var summary: String?
     @State private var error: String?
@@ -450,9 +485,9 @@ struct AISummaryView: View {
                     Label("MINTO INTELLIGENCE", systemImage: "sparkles")
                         .font(.caption.weight(.bold)).tracking(1.6).foregroundStyle(teal)
                     Text("Your spending,\nexplained.").font(.system(.largeTitle, design: .serif).weight(.medium))
-                    HStack { Text("\(month.label) \(month.year)"); Spacer(); Text(month.total.usd).bold() }
+                    HStack { Text(month.displayLabel); Spacer(); Text(month.total.usd).bold() }
                         .padding(18).background(.white, in: RoundedRectangle(cornerRadius: 18))
-                    Text("Get a concise summary of this month’s category totals and how they compare with the previous month. Periods may be incomplete.")
+                    Text(month.id == "all" ? "A summary across all loaded months. Some months may be incomplete." : "Get a concise summary of this month’s category totals and how they compare with the previous month. Periods may be incomplete.")
                         .font(.subheadline).foregroundStyle(.secondary)
                     if let fetchedAt { Text("Based on sheet data fetched \(fetchedAt.formatted(date: .abbreviated, time: .shortened)).")
                         .font(.caption).foregroundStyle(.secondary) }
@@ -465,7 +500,7 @@ struct AISummaryView: View {
                     }
                     if let error { Label(error, systemImage: "exclamationmark.circle").font(.subheadline).foregroundStyle(.orange) }
                     Button { Task { await generate() } } label: {
-                        Label(summary == nil ? "Summarize this month" : "Generate again", systemImage: "sparkles")
+                        Label(summary == nil ? "Summarize this period" : "Generate again", systemImage: "sparkles")
                             .font(.headline).frame(maxWidth: .infinity).padding(16)
                             .foregroundStyle(.white).background(ink, in: Capsule())
                     }.disabled(isLoading)
@@ -499,7 +534,7 @@ struct AISummaryView: View {
             request.setValue("Bearer " + token, forHTTPHeaderField: "Authorization")
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.httpBody = try JSONEncoder().encode(AnalysisPayload(
-                current: .init(month), previous: previous.map(AnalysisPayload.Month.init)))
+                current: .init(month, coveredMonths: coveredMonths), previous: previous.map { AnalysisPayload.Month($0) }))
             let (data, response) = try await URLSession.shared.data(for: request)
             guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
             if http.statusCode != 200 {

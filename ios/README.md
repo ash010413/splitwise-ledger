@@ -28,6 +28,12 @@ Tap a monthly chart bar to select its month and see the amount. Category charts
 also select months. The redundant horizontal month chips have been removed. The month picker and
 category history rows remain available alongside direct chart selection. Category rows open definitions and their spending history.
 
+The overview picker also includes **All months**. It adds each loaded month's
+category values exactly once, updates the total and breakdown, and preserves that
+selection during refresh. Ask Minto receives the aggregate plus the covered month
+IDs, without a misleading previous-month comparison. Tap selection resolves the
+nearest bar center directly and does not rely on cached chart-selection changes.
+
 ## Ask Minto (Gemini)
 
 The floating Ask Minto button, or Preview Gemini summary in Settings, opens an

@@ -44,7 +44,8 @@ public struct MonthSnapshot: Identifiable, Sendable, Codable {
     public let label: String
     public let amounts: [SpendCategory: Decimal]
     public var total: Decimal { amounts.values.reduce(0, +) }
-    public var year: String { String(id.prefix(4)) }
+    public var year: String { id == "all" ? "" : String(id.prefix(4)) }
+    public var displayLabel: String { id == "all" ? "All months" : "\(label) \(year)" }
     public var shortLabel: String { String(label.prefix(3)) + " " + year.suffix(2) }
     public func amount(_ category: SpendCategory) -> Decimal { amounts[category] ?? 0 }
 }
@@ -65,6 +66,23 @@ public struct LedgerDataset: Sendable, Codable {
     public let isPreview: Bool
     public var fetchedAt: Date = Date()
     public var warnings: [String] = []
+    public func summary(for selection: String) -> MonthSnapshot? {
+        guard selection == "all" else { return months.first { $0.id == selection } }
+        guard !months.isEmpty else { return nil }
+        let amounts = Dictionary(uniqueKeysWithValues: SpendCategory.allCases.map { category in
+            (category, months.reduce(Decimal.zero) { $0 + $1.amount(category) })
+        })
+        return MonthSnapshot(id: "all", label: "All months", amounts: amounts)
+    }
+}
+
+/// Resolve the nearest bar center for a direct tap. Independent of previous selection state.
+public enum ChartHitTesting {
+    public static func nearestIndex(at position: Double, centers: [Double]) -> Int? {
+        guard position.isFinite else { return nil }
+        return centers.indices.filter { centers[$0].isFinite }
+            .min { abs(centers[$0] - position) < abs(centers[$1] - position) }
+    }
 }
 
 /// Implement this boundary with a Sheets adapter later; views never read cells directly.

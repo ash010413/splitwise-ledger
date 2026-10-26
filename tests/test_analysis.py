@@ -35,6 +35,22 @@ def test_all_categories_required():
         AnalysisMonth(month="2026-10", amounts={Category.HOME: "5"})
 
 
+def test_all_month_scope_preserves_covered_periods():
+    body = AnalysisRequest(
+        current=AnalysisMonth(
+            month="all",
+            covered_months=["2026-10", "2026-09"],
+            amounts={c: "1.00" for c in Category},
+        )
+    )
+    facts = body.facts()["selected"]
+    assert facts["month"] == "all"
+    assert facts["covered_months"] == ["2026-09", "2026-10"]
+    assert facts["total"] == "12.00"
+    with pytest.raises(ValidationError):
+        AnalysisMonth(month="all", amounts={c: "1.00" for c in Category})
+
+
 def test_gemini_uses_header_secret_and_only_aggregate_payload(monkeypatch):
     def handle(req):
         assert req.headers["x-goog-api-key"] == "private-test-key"
