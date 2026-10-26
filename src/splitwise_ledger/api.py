@@ -16,6 +16,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from .analysis import AnalysisRequest, summarize
 from .domain import Category
 from .splitwise import SplitwiseClient
 from .store import ConflictError, Store
@@ -29,6 +30,8 @@ class Settings(BaseSettings):
     app_api_token: str = Field(min_length=32)
     token_encryption_key: str
     database_path: str = "data/ledger.sqlite3"
+    gemini_api_key: str = ""
+    gemini_model: str = Field(default="gemini-3.8-flash", pattern=r"^[a-zA-Z0-9.-]+$")
 
 
 class Review(BaseModel):
@@ -67,6 +70,8 @@ def create_app(settings: Settings | None = None, provider=None) -> FastAPI:
     )
     app = FastAPI(title="Splitwise Ledger", version="0.1.0")
     lock = asyncio.Lock()
+    analysis_lock = asyncio.Lock()
+    analysis_cache = {}
     bearer = HTTPBearer(auto_error=False)
 
     def authenticated(
@@ -80,6 +85,37 @@ def create_app(settings: Settings | None = None, provider=None) -> FastAPI:
     @app.get("/health")
     def health():
         return {"status": "ok"}
+
+    @app.post("/analysis", dependencies=[Depends(authenticated)])
+    async def analyze(body: AnalysisRequest):
+        if not settings.gemini_api_key:
+            raise HTTPException(503, "Add GEMINI_API_KEY to the backend .env and restart it.")
+        fingerprint = body.model_dump_json()
+        cached = analysis_cache.get(fingerprint)
+        if cached and time.time() - cached["created"] < 300:
+            return cached["response"]
+        if analysis_lock.locked():
+            raise HTTPException(429, "A summary is already being generated. Please wait.")
+        async with analysis_lock:
+            try:
+                result = await summarize(body, settings.gemini_api_key, settings.gemini_model)
+            except httpx.HTTPStatusError as exc:
+                detail = "Gemini request failed. Check the backend key and configured model."
+                if exc.response.status_code == 429:
+                    detail = "Gemini quota or rate limit reached. Try again later."
+                raise HTTPException(502, detail) from None
+            except (httpx.HTTPError, ValueError, KeyError):
+                raise HTTPException(
+                    502, "Gemini could not return a complete summary. Try again."
+                ) from None
+            response = {
+                "summary": result,
+                "month": body.current.month,
+                "model": settings.gemini_model,
+            }
+            analysis_cache.clear()
+            analysis_cache[fingerprint] = {"created": time.time(), "response": response}
+            return response
 
     @app.get("/categories", dependencies=[Depends(authenticated)])
     def categories():

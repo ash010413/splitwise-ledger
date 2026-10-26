@@ -3,19 +3,29 @@
 ## Current product direction
 
 The user now maintains the Google Sheet manually. The immediate deliverable is the
-native read-only iOS app under `ios/`, using an explicitly labeled snapshot until
-sheet fetching is connected. See `ios/README.md`. Splitwise ingestion and category
+native read-only iOS app under `ios/`, reading the existing shared Google Sheet
+directly over HTTPS. See `ios/README.md`. Splitwise ingestion and category
 automation below are retained as future design work, not prerequisites for the viewer.
 
 ```mermaid
 flowchart LR
     Manual[User updates Google Sheet] --> Sheet[Existing monthly summary and transactions]
-    Sheet -. future read-only adapter .-> Repository[LedgerRepository]
-    Preview[Current labeled preview dataset] --> Repository
+    Sheet --> Repository[SheetsLedgerRepository]
     Repository --> Model[Main-actor view model]
     Model --> Dashboard[Overview and category charts]
     Model --> Activity[Search and transaction details]
+    Model -->|On demand: category aggregates only| Backend[Authenticated summary endpoint]
+    Backend --> Gemini[Gemini API]
 ```
+
+Sheets refreshes on foreground entry, every 60 seconds while foreground and by
+pull-to-refresh. Strict CSV/schema/Decimal validation reconciles monthly totals
+before replacing the snapshot. Last successful data is cached offline. Activity
+remains separate from summary totals, and signed amounts are preserved visibly.
+The AI summary receives aggregate data only, never transaction descriptions or
+friend identifiers; it cannot mutate spending records. A missing Gemini key does
+not prevent Sheets reads. The backend keeps the key server-side and the iOS app
+stores only its backend authentication token in device-only Keychain storage.
 
 ## Scope
 

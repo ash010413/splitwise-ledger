@@ -1,5 +1,6 @@
 import SwiftUI
 import Charts
+import Security
 
 private let ink = Color(red: 0.10, green: 0.19, blue: 0.18)
 private let teal = Color(red: 0.16, green: 0.45, blue: 0.37)
@@ -9,32 +10,63 @@ private let paper = Color(red: 0.97, green: 0.97, blue: 0.94)
 final class LedgerModel {
     var data: LedgerDataset?
     var error: String?
-    var selectedMonthID = "2026-10"
+    var selectedMonthID = ""
+    var isRefreshing = false
+    private let cacheURL = URL.cachesDirectory.appending(path: "ledger-sheets-v1.json")
     private let repository: any LedgerRepository
-    init(repository: any LedgerRepository = PreviewLedgerRepository()) { self.repository = repository }
+    init(repository: any LedgerRepository = SheetsLedgerRepository()) {
+        self.repository = repository
+        if let cached = try? Data(contentsOf: cacheURL),
+           let snapshot = try? JSONDecoder().decode(LedgerDataset.self, from: cached), !snapshot.isPreview {
+            data = snapshot
+            selectedMonthID = snapshot.months.last?.id ?? selectedMonthID
+        }
+    }
     var month: MonthSnapshot? { data?.months.first { $0.id == selectedMonthID } }
     var previous: MonthSnapshot? {
         guard let months = data?.months, let index = months.firstIndex(where: { $0.id == selectedMonthID }), index > 0 else { return nil }
         return months[index - 1]
     }
     func load() async {
-        error = nil
-        do { data = try await repository.load() }
-        catch { self.error = "Your spending could not be loaded. Please try again." }
+        guard !isRefreshing else { return }
+        isRefreshing = true
+        defer { isRefreshing = false }
+        do {
+            let snapshot = try await repository.load()
+            guard !snapshot.months.isEmpty else { throw SheetError.invalid("The summary has no months.") }
+            data = snapshot
+            if !snapshot.months.contains(where: { $0.id == selectedMonthID }) {
+                selectedMonthID = snapshot.months.last!.id
+            }
+            error = nil
+            if let encoded = try? JSONEncoder().encode(snapshot) {
+                try? encoded.write(to: cacheURL, options: [.atomic, .completeFileProtectionUnlessOpen])
+            }
+        } catch {
+            self.error = (error as? SheetError)?.errorDescription ?? "Could not refresh Google Sheets. Check your connection."
+        }
     }
 }
 
 @main
 struct LedgerApp: App {
     @State private var model = LedgerModel()
+    @Environment(\.scenePhase) private var scenePhase
     var body: some Scene {
         WindowGroup {
             TabView {
                 DashboardView(model: model).tabItem { Label("Overview", systemImage: "square.grid.2x2") }
                 ActivityView(model: model).tabItem { Label("Activity", systemImage: "list.bullet.rectangle") }
-                SettingsView().tabItem { Label("Settings", systemImage: "slider.horizontal.3") }
+                SettingsView(model: model).tabItem { Label("Settings", systemImage: "slider.horizontal.3") }
             }
-            .tint(teal).preferredColorScheme(.light).task { await model.load() }
+            .tint(teal).preferredColorScheme(.light)
+            .task(id: scenePhase) {
+                guard scenePhase == .active else { return }
+                while !Task.isCancelled {
+                    await model.load()
+                    do { try await Task.sleep(for: .seconds(60)) } catch { return }
+                }
+            }
         }
     }
 }
@@ -42,6 +74,8 @@ struct LedgerApp: App {
 struct DashboardView: View {
     @Bindable var model: LedgerModel
     @State private var selectedCategory: SpendCategory?
+    @State private var chartMonth: String?
+    @State private var showsAI = false
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -55,7 +89,7 @@ struct DashboardView: View {
                         Image(systemName: "leaf.fill").font(.title2).foregroundStyle(teal)
                             .padding(14).background(.white, in: Circle()).accessibilityHidden(true)
                     }
-                    PreviewNotice()
+                    ConnectionNotice(model: model)
                     if let month = model.month {
                         monthSelector
                         totalCard(month)
@@ -76,7 +110,7 @@ struct DashboardView: View {
                                 }
                             }
                         }.padding(16).background(.white, in: RoundedRectangle(cornerRadius: 24))
-                        Text("Summary figures are a snapshot of the table you shared. They are not live sheet data.")
+                        Text("Totals come from your monthly summary tab. Activity is shown separately and does not change these totals.")
                             .font(.caption).foregroundStyle(.secondary)
                     } else if let error = model.error {
                         ContentUnavailableView { Label("Couldn’t load spending", systemImage: "wifi.exclamationmark") }
@@ -87,6 +121,17 @@ struct DashboardView: View {
                 }.padding(22)
             }
             .background(paper).foregroundStyle(ink)
+            .refreshable { await model.load() }
+            .safeAreaInset(edge: .bottom, alignment: .trailing) {
+                Button { showsAI = true } label: {
+                    Label("Ask Ledger", systemImage: "sparkles").font(.subheadline.bold())
+                        .padding(.horizontal, 20).padding(.vertical, 14).foregroundStyle(.white)
+                        .background(ink, in: Capsule()).shadow(color: ink.opacity(0.2), radius: 10, y: 4)
+                }.disabled(model.month == nil).padding(.trailing, 22).padding(.bottom, 8)
+            }
+            .sheet(isPresented: $showsAI) {
+                if let month = model.month { AISummaryView(month: month, previous: model.previous, fetchedAt: model.data?.fetchedAt) }
+            }
             .navigationTitle("Ledger").navigationBarTitleDisplayMode(.inline)
             .sheet(item: $selectedCategory) { category in
                 CategoryDetail(category: category, model: model)
@@ -98,7 +143,7 @@ struct DashboardView: View {
             Text("Monthly overview").font(.headline)
             Spacer()
             Picker("Month", selection: $model.selectedMonthID) {
-                ForEach(model.data?.months ?? []) { month in Text("\(month.label) 2026").tag(month.id) }
+                ForEach(model.data?.months ?? []) { month in Text("\(month.label) \(month.year)").tag(month.id) }
             }.tint(teal).accessibilityIdentifier("monthPicker")
         }
     }
@@ -128,12 +173,16 @@ struct DashboardView: View {
     }
     private var trendCard: some View {
         VStack(alignment: .leading, spacing: 18) {
-            HStack { Text("The bigger picture").font(.headline); Spacer(); Text("2026").font(.caption).foregroundStyle(.secondary) }
+            HStack { Text("The bigger picture").font(.headline); Spacer(); Text("Tap a bar").font(.caption).foregroundStyle(.secondary) }
             Chart(model.data?.months ?? []) { month in
-                BarMark(x: .value("Month", String(month.label.prefix(3))), y: .value("Spending", month.total.chartValue), width: .ratio(0.48))
+                BarMark(x: .value("Month", month.shortLabel), y: .value("Spending", month.total.chartValue), width: .ratio(0.48))
                     .foregroundStyle(month.id == model.selectedMonthID ? teal : teal.opacity(0.18))
                     .cornerRadius(7)
                     .accessibilityLabel(month.label).accessibilityValue(month.total.usd)
+            }
+            .chartXSelection(value: $chartMonth)
+            .onChange(of: chartMonth) { _, value in
+                if let month = model.data?.months.first(where: { $0.shortLabel == value }) { model.selectedMonthID = month.id }
             }
             .chartYAxis { AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) { value in
                 AxisGridLine().foregroundStyle(ink.opacity(0.06))
@@ -141,6 +190,20 @@ struct DashboardView: View {
             }}
             .chartXAxis { AxisMarks { _ in AxisValueLabel().font(.caption) } }
             .frame(height: 150)
+            if let selected = model.month {
+                Text("\(selected.label) \(selected.year) · \(selected.total.usd)")
+                    .font(.caption.weight(.semibold)).foregroundStyle(teal)
+            }
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack {
+                    ForEach(model.data?.months ?? []) { month in
+                        Button(month.shortLabel) { model.selectedMonthID = month.id; chartMonth = month.shortLabel }
+                            .font(.caption).padding(8)
+                            .background(month.id == model.selectedMonthID ? teal.opacity(0.15) : paper, in: Capsule())
+                            .accessibilityLabel("Show \(month.label) \(month.year)")
+                    }
+                }
+            }
         }.padding(22).background(.white, in: RoundedRectangle(cornerRadius: 24))
     }
     private func insightCard(_ month: MonthSnapshot) -> some View {
@@ -151,17 +214,29 @@ struct DashboardView: View {
                 Text("A closer look").font(.subheadline.bold())
                 Text("\(biggest.rawValue) accounts for \((month.amount(biggest) / max(month.total, 1)).chartValue.formatted(.percent.precision(.fractionLength(0)))) of \(month.label)’s spending.")
                     .font(.subheadline).foregroundStyle(.secondary)
-                Text("Calculated from the preview summary").font(.caption2).foregroundStyle(.secondary)
+                Text("Calculated from your sheet summary").font(.caption2).foregroundStyle(.secondary)
             }
         }.padding(18).frame(maxWidth: .infinity, alignment: .leading)
             .background(teal.opacity(0.08), in: RoundedRectangle(cornerRadius: 20))
     }
 }
 
-struct PreviewNotice: View {
+struct ConnectionNotice: View {
+    let model: LedgerModel
     var body: some View {
-        Label("Preview data · Google Sheets not connected", systemImage: "eye")
-            .font(.caption).foregroundStyle(teal).padding(12).frame(maxWidth: .infinity, alignment: .leading)
+        VStack(alignment: .leading, spacing: 8) {
+            if let date = model.data?.fetchedAt {
+                Label("Google Sheets · fetched \(date.formatted(date: .omitted, time: .shortened))", systemImage: "tablecells")
+                Text("\(date.formatted(date: .abbreviated, time: .omitted)) · refreshes every minute while open")
+                    .font(.caption2)
+            } else { Label("Connecting to Google Sheets", systemImage: "tablecells") }
+            if let error = model.error {
+                Text(error).foregroundStyle(.orange)
+                if model.data != nil { Text("Showing last successfully fetched data.").font(.caption2) }
+            }
+            ForEach(model.data?.warnings ?? [], id: \.self) { Text($0).font(.caption2).foregroundStyle(.secondary) }
+            if model.isRefreshing { ProgressView().controlSize(.small) }
+        }.font(.caption).foregroundStyle(teal).padding(12).frame(maxWidth: .infinity, alignment: .leading)
             .background(teal.opacity(0.07), in: RoundedRectangle(cornerRadius: 12))
     }
 }
@@ -192,6 +267,7 @@ struct CategoryRow: View {
 struct CategoryDetail: View {
     let category: SpendCategory
     let model: LedgerModel
+    @State private var chartMonth: String?
     @Environment(\.dismiss) private var dismiss
     var body: some View {
         NavigationStack {
@@ -201,12 +277,21 @@ struct CategoryDetail: View {
                     Text(category.definition).font(.body).foregroundStyle(.secondary)
                     Text(model.month?.amount(category).usd ?? "$0.00")
                         .font(.system(.largeTitle, design: .rounded).bold())
-                    Text("\(model.month?.label ?? "") 2026 · preview summary").font(.subheadline).foregroundStyle(.secondary)
+                    Text("\(model.month?.label ?? "") \(model.month?.year ?? "") · sheet summary").font(.subheadline).foregroundStyle(.secondary)
                     Chart(model.data?.months ?? []) { month in
-                        BarMark(x: .value("Month", String(month.label.prefix(3))), y: .value("Amount", month.amount(category).chartValue))
+                        BarMark(x: .value("Month", month.shortLabel), y: .value("Amount", month.amount(category).chartValue))
                             .foregroundStyle(teal).cornerRadius(5)
-                    }.frame(height: 180)
-                    Text("Transaction details will appear here after your sheet is connected. Summary totals are kept separate from illustrative activity.")
+                    }.chartXSelection(value: $chartMonth)
+                        .onChange(of: chartMonth) { _, value in
+                            if let month = model.data?.months.first(where: { $0.shortLabel == value }) { model.selectedMonthID = month.id }
+                        }.frame(height: 180)
+                    Text("Tap a bar to view that month’s category amount.").font(.caption).foregroundStyle(teal)
+                    ForEach(model.data?.months ?? []) { month in
+                        Button { model.selectedMonthID = month.id; chartMonth = month.shortLabel } label: {
+                            HStack { Text("\(month.label) \(month.year)"); Spacer(); Text(month.amount(category).usd) }
+                        }.foregroundStyle(month.id == model.selectedMonthID ? teal : ink).padding(.vertical, 5)
+                    }
+                    Text("Summary totals are read from your sheet; transaction records may cover only part of the month.")
                         .font(.subheadline).foregroundStyle(.secondary)
                 }.padding(26)
             }.background(paper).navigationTitle(category.rawValue).navigationBarTitleDisplayMode(.inline)
@@ -223,16 +308,16 @@ struct ActivityView: View {
     private var entries: [LedgerEntry] {
         (model.data?.entries ?? []).filter {
             (filter == nil || $0.category == filter) &&
-            (search.isEmpty || $0.description.localizedCaseInsensitiveContains(search) || $0.category.rawValue.localizedCaseInsensitiveContains(search))
+            (search.isEmpty || $0.description.localizedCaseInsensitiveContains(search) || ($0.category?.rawValue ?? "Needs review").localizedCaseInsensitiveContains(search))
         }
     }
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    PreviewNotice()
-                    Text("An example of your everyday.").font(.system(.title2, design: .serif))
-                    Text("Illustrative transactions to explore the app. These do not make up the monthly summary totals.")
+                    ConnectionNotice(model: model)
+                    Text("Your everyday, in view.").font(.system(.title2, design: .serif))
+                    Text("Transactions read from your sheet. Your monthly summary remains the source for dashboard totals.")
                         .font(.subheadline).foregroundStyle(.secondary)
                     HStack {
                         Text("Transactions").font(.headline)
@@ -249,11 +334,11 @@ struct ActivityView: View {
                         ForEach(entries) { entry in
                             Button { selectedEntry = entry } label: {
                                 HStack(spacing: 14) {
-                                    Image(systemName: entry.category.symbol).foregroundStyle(teal).frame(width: 44, height: 44)
+                                    Image(systemName: entry.category?.symbol ?? "questionmark").foregroundStyle(teal).frame(width: 44, height: 44)
                                         .background(teal.opacity(0.08), in: RoundedRectangle(cornerRadius: 15))
                                     VStack(alignment: .leading, spacing: 6) {
                                         Text(entry.description).font(.subheadline.weight(.semibold))
-                                        Text("\(entry.day) · \(entry.category.rawValue)").font(.caption).foregroundStyle(.secondary)
+                                        Text("\(entry.day) · \(entry.category?.rawValue ?? "Needs review")").font(.caption).foregroundStyle(.secondary)
                                     }
                                     Spacer()
                                     Text(entry.share.usd).font(.subheadline.weight(.semibold))
@@ -263,16 +348,17 @@ struct ActivityView: View {
                     }
                 }.padding(22)
             }.background(paper).foregroundStyle(ink).navigationTitle("Activity")
+                .refreshable { await model.load() }
                 .searchable(text: $search, prompt: "Search description or category")
                 .sheet(item: $selectedEntry) { entry in
                     NavigationStack {
                         Form {
                             Section { LabeledContent("Description", value: entry.description)
                                 LabeledContent("Your share", value: entry.share.usd)
-                                LabeledContent("Category", value: entry.category.rawValue)
-                                LabeledContent("Date", value: "\(entry.day), 2026") }
+                                LabeledContent("Category", value: entry.category?.rawValue ?? "Needs review")
+                                LabeledContent("Date", value: entry.day) }
                             Section { Text(entry.note).foregroundStyle(.secondary)
-                                Text("This is a read-only preview. Update real transactions in your Google Sheet.") }
+                                Text("This app is read-only. Update transactions and categories in your Google Sheet.") }
                         }.navigationTitle("Transaction").navigationBarTitleDisplayMode(.inline)
                             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { selectedEntry = nil } } }
                     }.tint(teal)
@@ -282,13 +368,19 @@ struct ActivityView: View {
 }
 
 struct SettingsView: View {
+    let model: LedgerModel
+    @AppStorage("analysisBackendURL") private var backendURL = "http://127.0.0.1:8000"
+    @State private var appToken = ""
+    @State private var tokenStatus = ""
     var body: some View {
         NavigationStack {
             List {
                 Section {
                     Label("Google Sheets", systemImage: "tablecells").font(.headline)
-                    LabeledContent("Connection", value: "Not connected")
-                    Text("Keep updating your sheet as usual. A future connection will bring your figures into this app.")
+                    LabeledContent("Connection", value: model.data == nil ? "Not loaded" : "Read-only")
+                    Button("Refresh now") { Task { await model.load() } }.disabled(model.isRefreshing)
+                    Link("Open Google Sheet", destination: URL(string: "https://docs.google.com/spreadsheets/d/\(SheetsLedgerRepository.sheetID)/edit")!)
+                    Text("Refreshes on launch, when returning to the app, every minute while open, and with pull-to-refresh. Last successful data is cached offline.")
                         .font(.subheadline).foregroundStyle(.secondary)
                 } header: { Text("Your data") }
                 Section("Categories") {
@@ -301,14 +393,151 @@ struct SettingsView: View {
                         }
                     }
                 }
-                Section("Analysis") {
-                    Label("Calculated insights", systemImage: "chart.bar.xaxis")
-                    Text("Insights currently use arithmetic on preview totals. Gemini is not connected, and no expense data is sent to an AI service.")
+                Section("Gemini summaries") {
+                    TextField("Backend URL", text: $backendURL).textInputAutocapitalization(.never).autocorrectionDisabled()
+                        .keyboardType(.URL)
+                    SecureField("Backend APP_API_TOKEN", text: $appToken).textInputAutocapitalization(.never)
+                    Button("Save backend token securely") {
+                        if appToken.count >= 32, AppCredential.save(appToken) { tokenStatus = "Saved in Keychain"; appToken = "" }
+                        else { tokenStatus = "Enter a valid backend token (at least 32 characters)." }
+                    }
+                    if !tokenStatus.isEmpty { Text(tokenStatus).font(.caption) }
+                    Text("The Gemini key stays in the backend .env. Ask Ledger sends only selected-month and previous-month category totals to Gemini when you request a summary. Use HTTPS for a hosted backend; localhost is for the simulator.")
                         .font(.subheadline).foregroundStyle(.secondary)
                 }
-                Section { Text("Ledger · Preview 0.1\nUSD · July–October 2026 snapshot")
+                Section { Text("Ledger · 0.2\nUSD · Read-only Google Sheets viewer")
                     .font(.caption).foregroundStyle(.secondary) }
             }.scrollContentBackground(.hidden).background(paper).navigationTitle("Settings")
         }.tint(teal)
+    }
+}
+
+@MainActor private enum AppCredential {
+    private static let query: [String: Any] = [
+        kSecClass as String: kSecClassGenericPassword,
+        kSecAttrService as String: "com.ashwin.splitwiseledger.backend",
+        kSecAttrAccount as String: "api-token"
+    ]
+    static func save(_ token: String) -> Bool {
+        let value = [kSecValueData as String: Data(token.utf8)]
+        let status = SecItemUpdate(query as CFDictionary, value as CFDictionary)
+        if status == errSecSuccess { return true }
+        guard status == errSecItemNotFound else { return false }
+        var item = query
+        item[kSecValueData as String] = Data(token.utf8)
+        item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        return SecItemAdd(item as CFDictionary, nil) == errSecSuccess
+    }
+    static func read() -> String? {
+        var request = query
+        request[kSecReturnData as String] = true
+        request[kSecMatchLimit as String] = kSecMatchLimitOne
+        var result: CFTypeRef?
+        guard SecItemCopyMatching(request as CFDictionary, &result) == errSecSuccess,
+              let data = result as? Data else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+}
+
+private struct AnalysisPayload: Encodable {
+    struct Month: Encodable {
+        let month: String
+        let amounts: [String: String]
+        init(_ source: MonthSnapshot) {
+            month = source.id
+            amounts = Dictionary(uniqueKeysWithValues: SpendCategory.allCases.map {
+                ($0.rawValue, NSDecimalNumber(decimal: source.amount($0)).stringValue)
+            })
+        }
+    }
+    let current: Month
+    let previous: Month?
+    let currency = "USD"
+}
+
+struct AISummaryView: View {
+    let month: MonthSnapshot
+    let previous: MonthSnapshot?
+    let fetchedAt: Date?
+    @Environment(\.dismiss) private var dismiss
+    @AppStorage("analysisBackendURL") private var backendURL = "http://127.0.0.1:8000"
+    @State private var summary: String?
+    @State private var error: String?
+    @State private var isLoading = false
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    Label("LEDGER INTELLIGENCE", systemImage: "sparkles")
+                        .font(.caption.weight(.bold)).tracking(1.6).foregroundStyle(teal)
+                    Text("Your spending,\nexplained.").font(.system(.largeTitle, design: .serif).weight(.medium))
+                    HStack { Text("\(month.label) \(month.year)"); Spacer(); Text(month.total.usd).bold() }
+                        .padding(18).background(.white, in: RoundedRectangle(cornerRadius: 18))
+                    Text("Get a concise summary of this month’s category totals and how they compare with the previous month. Periods may be incomplete.")
+                        .font(.subheadline).foregroundStyle(.secondary)
+                    if let fetchedAt { Text("Based on sheet data fetched \(fetchedAt.formatted(date: .abbreviated, time: .shortened)).")
+                        .font(.caption).foregroundStyle(.secondary) }
+                    if isLoading {
+                        HStack(spacing: 12) { ProgressView(); Text("Looking at the numbers…").font(.subheadline) }
+                    }
+                    if let summary {
+                        Text(summary).font(.body).textSelection(.enabled).lineSpacing(5)
+                        Text("Generated by Gemini. Check observations against the figures above.").font(.caption).foregroundStyle(.secondary)
+                    }
+                    if let error { Label(error, systemImage: "exclamationmark.circle").font(.subheadline).foregroundStyle(.orange) }
+                    Button { Task { await generate() } } label: {
+                        Label(summary == nil ? "Summarize this month" : "Generate again", systemImage: "sparkles")
+                            .font(.headline).frame(maxWidth: .infinity).padding(16)
+                            .foregroundStyle(.white).background(ink, in: Capsule())
+                    }.disabled(isLoading)
+                    Text("Only category totals and month labels are sent to Gemini. No transaction descriptions, friend details, sheet URL or credentials are included in the summary data.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }.padding(26)
+            }.background(paper).foregroundStyle(ink).navigationBarTitleDisplayMode(.inline)
+                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+        }.tint(teal)
+    }
+    @MainActor private func generate() async {
+        guard !isLoading else { return }
+        error = nil
+        guard let token = AppCredential.read(), !token.isEmpty else {
+            error = "Add your backend APP_API_TOKEN in Settings. The Gemini key belongs in the backend .env."
+            return
+        }
+        guard var components = URLComponents(string: backendURL),
+              ["https", "http"].contains(components.scheme ?? ""), components.host != nil,
+              components.user == nil, components.password == nil, components.query == nil,
+              components.fragment == nil else { error = "Enter a valid backend URL in Settings."; return }
+        components.path = components.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        components.path = "/" + (components.path.isEmpty ? "analysis" : components.path + "/analysis")
+        guard let url = components.url else { error = "Invalid backend URL."; return }
+        isLoading = true
+        defer { isLoading = false }
+        do {
+            var request = URLRequest(url: url, timeoutInterval: 75)
+            request.httpMethod = "POST"
+            request.setValue("Bearer " + token, forHTTPHeaderField: "Authorization")
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try JSONEncoder().encode(AnalysisPayload(
+                current: .init(month), previous: previous.map(AnalysisPayload.Month.init)))
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
+            if http.statusCode != 200 {
+                switch http.statusCode {
+                case 401: error = "Backend token rejected. Update APP_API_TOKEN in Settings."
+                case 503: error = "Add GEMINI_API_KEY to the backend .env and restart the backend."
+                case 429: error = "A summary is already running. Please wait and try again."
+                case 502: error = "Gemini could not generate a summary. Check its key, model and quota."
+                default: error = "Summary request failed (HTTP \(http.statusCode))."
+                }
+                return
+            }
+            struct Result: Decodable { let summary: String; let month: String }
+            let result = try JSONDecoder().decode(Result.self, from: data)
+            guard result.month == month.id else { throw URLError(.badServerResponse) }
+            summary = result.summary
+        } catch {
+            self.error = "Could not reach the summary backend. Check its URL and make sure it is running."
+        }
     }
 }

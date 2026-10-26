@@ -66,6 +66,16 @@ def test_private_routes_require_auth(client):
     assert client.post("/oauth/splitwise/start").status_code == 401
 
 
+def test_analysis_requires_auth_and_reports_missing_key(client):
+    from splitwise_ledger.domain import Category
+
+    body = {"current": {"month": "2026-10", "amounts": {c.value: "1.00" for c in Category}}}
+    assert client.post("/analysis", json=body).status_code == 401
+    response = client.post("/analysis", json=body, headers=AUTH)
+    assert response.status_code == 503
+    assert "GEMINI_API_KEY" in response.json()["detail"]
+
+
 def test_oauth_state_cookie_required_and_state_is_one_use(client):
     state = connect(client)
     assert client.get("/oauth/splitwise/callback?state=wrong&code=valid-code").status_code == 400
