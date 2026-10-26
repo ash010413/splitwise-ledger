@@ -61,6 +61,7 @@ struct LedgerApp: App {
             .tint(teal).preferredColorScheme(.light)
             .task(id: scenePhase) {
                 guard scenePhase == .active else { return }
+                SummaryConnection.configureDevelopmentSession()
                 while !Task.isCancelled {
                     await model.load()
                     do { try await Task.sleep(for: .seconds(60)) } catch { return }
@@ -193,16 +194,7 @@ struct DashboardView: View {
                 Text("\(selected.label) \(selected.year) · \(selected.total.usd)")
                     .font(.caption.weight(.semibold)).foregroundStyle(teal)
             }
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack {
-                    ForEach(model.data?.months ?? []) { month in
-                        Button(month.shortLabel) { model.selectedMonthID = month.id; chartMonth = month.shortLabel }
-                            .font(.caption).padding(8)
-                            .background(month.id == model.selectedMonthID ? teal.opacity(0.15) : paper, in: Capsule())
-                            .accessibilityLabel("Show \(month.label) \(month.year)")
-                    }
-                }
-            }
+
         }.padding(22).background(.white, in: RoundedRectangle(cornerRadius: 24))
     }
     private func insightCard(_ month: MonthSnapshot) -> some View {
@@ -332,9 +324,6 @@ struct CategoryHistoryView: View {
 
 struct SettingsView: View {
     let model: LedgerModel
-    @AppStorage("analysisBackendURL") private var backendURL = "http://127.0.0.1:8000"
-    @State private var appToken = ""
-    @State private var tokenStatus = ""
     @State private var showsAI = false
     var body: some View {
         NavigationStack {
@@ -365,15 +354,7 @@ struct SettingsView: View {
                     Button { showsAI = true } label: {
                         Label("Preview Gemini summary", systemImage: "sparkles")
                     }.disabled(model.month == nil)
-                    TextField("Backend URL", text: $backendURL).textInputAutocapitalization(.never).autocorrectionDisabled()
-                        .keyboardType(.URL)
-                    SecureField("Backend APP_API_TOKEN", text: $appToken).textInputAutocapitalization(.never)
-                    Button("Save backend token securely") {
-                        if appToken.count >= 32, AppCredential.save(appToken) { tokenStatus = "Saved in Keychain"; appToken = "" }
-                        else { tokenStatus = "Enter a valid backend token (at least 32 characters)." }
-                    }
-                    if !tokenStatus.isEmpty { Text(tokenStatus).font(.caption) }
-                    Text("The Gemini key stays in the backend .env. Ask Minto sends only selected-month and previous-month category totals to Gemini when you request a summary. Use HTTPS for a hosted backend; localhost is for the simulator.")
+                    Text("Ask Minto summarizes your monthly category totals on demand. Your sheet and categories stay unchanged.")
                         .font(.subheadline).foregroundStyle(.secondary)
                 }
                 Section { Text("Minto · 0.3\nUSD · Read-only Google Sheets viewer")
@@ -385,6 +366,29 @@ struct SettingsView: View {
                     }
                 }
         }.tint(teal)
+    }
+}
+
+/// Endpoint and session provisioning are developer responsibilities, never a Settings form.
+@MainActor private enum SummaryConnection {
+    static var backendURL: String? {
+        #if DEBUG
+        if let value = ProcessInfo.processInfo.environment["MINTO_BACKEND_URL"], !value.isEmpty { return value }
+        #if targetEnvironment(simulator)
+        return "http://127.0.0.1:8000"
+        #else
+        return Bundle.main.object(forInfoDictionaryKey: "MintoBackendURL") as? String
+        #endif
+        #else
+        return Bundle.main.object(forInfoDictionaryKey: "MintoBackendURL") as? String
+        #endif
+    }
+    static func configureDevelopmentSession() {
+        #if DEBUG
+        if let token = ProcessInfo.processInfo.environment["MINTO_APP_TOKEN"], token.count >= 32 {
+            _ = AppCredential.save(token)
+        }
+        #endif
     }
 }
 
@@ -436,7 +440,6 @@ struct AISummaryView: View {
     let previous: MonthSnapshot?
     let fetchedAt: Date?
     @Environment(\.dismiss) private var dismiss
-    @AppStorage("analysisBackendURL") private var backendURL = "http://127.0.0.1:8000"
     @State private var summary: String?
     @State private var error: String?
     @State private var isLoading = false
@@ -477,16 +480,17 @@ struct AISummaryView: View {
         guard !isLoading else { return }
         error = nil
         guard let token = AppCredential.read(), !token.isEmpty else {
-            error = "Add your backend APP_API_TOKEN in Settings. The Gemini key belongs in the backend .env."
+            error = "Summaries aren’t available on this device yet. Please try again later."
             return
         }
-        guard var components = URLComponents(string: backendURL),
+        guard let backendURL = SummaryConnection.backendURL,
+              var components = URLComponents(string: backendURL),
               ["https", "http"].contains(components.scheme ?? ""), components.host != nil,
               components.user == nil, components.password == nil, components.query == nil,
-              components.fragment == nil else { error = "Enter a valid backend URL in Settings."; return }
+              components.fragment == nil else { error = "Summaries are temporarily unavailable. Please try again later."; return }
         components.path = components.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         components.path = "/" + (components.path.isEmpty ? "analysis" : components.path + "/analysis")
-        guard let url = components.url else { error = "Invalid backend URL."; return }
+        guard let url = components.url else { error = "Summaries are temporarily unavailable. Please try again later."; return }
         isLoading = true
         defer { isLoading = false }
         do {
@@ -500,15 +504,15 @@ struct AISummaryView: View {
             guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
             if http.statusCode != 200 {
                 switch http.statusCode {
-                case 401: error = "Backend token rejected. Update APP_API_TOKEN in Settings."
-                case 503: error = "Add GEMINI_API_KEY to the backend .env and restart the backend."
+                case 401: error = "Your summary session is unavailable. Please try again later."
+                case 503: error = "Summaries are temporarily unavailable. Please try again later."
                 case 429: error = "A summary is already running. Please wait and try again."
                 case 502:
                     let detail = (try? JSONSerialization.jsonObject(with: data)) as? [String: String]
                     error = detail?["detail"] == "Gemini timed out. Please try again later."
                         ? "Gemini timed out. Please try again later."
-                        : "Gemini could not generate a summary. Check its key, model and quota."
-                default: error = "Summary request failed (HTTP \(http.statusCode))."
+                        : "Couldn’t generate a summary right now. Please try again later."
+                default: error = "Couldn’t load the summary. Please try again later."
                 }
                 return
             }
@@ -517,7 +521,7 @@ struct AISummaryView: View {
             guard result.month == month.id else { throw URLError(.badServerResponse) }
             summary = result.summary
         } catch {
-            self.error = "Could not reach the summary backend. Check its URL and make sure it is running."
+            self.error = "Couldn’t connect to the summary service. Please try again later."
         }
     }
 }

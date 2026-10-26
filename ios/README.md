@@ -25,8 +25,8 @@ fall back to preview numbers. `SheetsLedgerRepository.sheetID` identifies the sh
   refresh warnings. There is no claim of real-time or background push.
 
 Tap a monthly chart bar to select its month and see the amount. Category charts
-also select months. Explicit month buttons provide an accessible alternative to
-chart gestures. Category rows open definitions and their spending history.
+also select months. The redundant horizontal month chips have been removed. The month picker and
+category history rows remain available alongside direct chart selection. Category rows open definitions and their spending history.
 
 ## Ask Minto (Gemini)
 
@@ -44,18 +44,30 @@ totals or the sheet. A summary remains labeled with the snapshot and month it an
    .venv/bin/uvicorn splitwise_ledger.api:create_app --factory --host 127.0.0.1 --no-access-log
    ```
 
-3. In app Settings, keep Backend URL as `http://127.0.0.1:8000` for the simulator.
-   Copy the backend `APP_API_TOKEN` from your local `.env` into the secure token field
-   and Save. This is the application token, **not** the Gemini key. It is stored in
-   device-only Keychain storage, never UserDefaults or source code.
-4. Tap Ask Minto, or Preview Gemini summary in Settings. Regenerate is optional.
+3. After building and installing the app on a booted simulator, run:
+
+   ```sh
+   .venv/bin/python tools/run_ios_development.py
+   ```
+
+   This developer command provisions the backend application token to the DEBUG
+   simulator app through its process environment, saving it in device-only Keychain.
+   It never prints the token, writes it into the app bundle, or sends the Gemini key
+   to the app. No backend URL, token field or credential setup appears in Settings.
+4. Tap Ask Minto, or Preview Gemini summary in Settings.
+
+The optional `--device` and `--backend-url` flags select another simulator/backend.
+Physical-device developers can configure `MINTO_BACKEND_URL` and `MINTO_APP_TOKEN`
+in a local, unshared debug scheme. Do not commit a secret-bearing scheme.
+Release builds exclude development credential provisioning. A hosted production
+release must provide `MintoBackendURL` in its build configuration and populate
+Keychain through real app authentication; the shared personal-development token is
+not a production authentication scheme. Gemini remains server-side in every build.
 
 For a real iPhone, localhost refers to the phone. Use an HTTPS-hosted backend, or for
-local development run Uvicorn on `0.0.0.0` and enter your Mac's reachable `.local`
-hostname. Both devices must be on the same trusted network. The app includes a local
-network purpose string and allows local networking without disabling HTTPS checks
-for public hosts. An iOS local-network prompt may appear. Never expose the development
-server to the public Internet. A hosted, multi-user release needs real per-user login.
+local development a reachable Mac `.local` hostname on the same trusted network.
+The app has a local-network purpose string without disabling HTTPS checks for public
+hosts. Never expose the development server to the public Internet.
 
 The backend serializes model requests and caches the latest identical aggregate
 request for five minutes. It returns actionable missing-key, auth and provider errors
