@@ -257,13 +257,7 @@ public struct SheetsLedgerRepository: LedgerRepository {
     }
     public func load() async throws -> LedgerDataset {
         let months = try await SheetParser.summary(fetch(tab: "2026"))
-        var entries: [LedgerEntry] = [], warnings: [String] = []
-        do { entries = try await SheetParser.transactions(fetch(tab: "Transactions")) }
-        catch { warnings.append("Transactions could not be refreshed. Monthly summary is up to date.") }
-        if entries.contains(where: { $0.share < 0 }) {
-            warnings.append("Some My Share values are negative. Activity shows them as recorded; summary totals are not recalculated from activity.")
-        }
-        if entries.contains(where: { $0.category == nil }) { warnings.append("Some transaction categories are unrecognized and need review in the sheet.") }
-        return LedgerDataset(months: months, entries: entries, isPreview: false, warnings: warnings)
+        // Transaction ingestion is deferred until Splitwise integration is ready.
+        return LedgerDataset(months: months, entries: [], isPreview: false)
     }
 }

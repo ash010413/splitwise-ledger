@@ -1,4 +1,4 @@
-# Ledger for iOS
+# Minto for iOS
 
 Native SwiftUI app, iOS 17+ and Xcode 16+. Open `LedgerApp.xcodeproj`, choose the
 `Ledger` scheme and an iPhone simulator, then Run. Existing signing settings are
@@ -16,24 +16,22 @@ fall back to preview numbers. `SheetsLedgerRepository.sheetID` identifies the sh
 - Month headers: `Jul 2026` format; Average and YTD columns are not imported as months.
 - Monthly category sums must exactly match `Total Monthly Expenses`. Invalid data
   leaves the previous successful snapshot intact and displays an error.
-- Activity tab: `Transactions`, with Date, Description, Category, My Share and Expense ID.
-- Summary totals remain authoritative; activity is not added to them. Signed share
-  values are displayed as recorded with a warning for negative values. `Dining out`
-  is an explicit alias for `Food / Dining`; unknown categories appear as Needs review.
+- Activity and transaction fetching are disabled until Splitwise integration is ready.
+- Settings category pages show each monthly total and a total across loaded months.
 - Currency is USD. Invalid currency formats, blank amounts, duplicate IDs, malformed
   CSV, invalid dates and incomplete category rows fail validation rather than becoming zero.
 - Refresh on launch, foreground entry, every 60 seconds while foreground, and pull-to-refresh.
 - Last successful snapshot is cached locally. The UI displays fetch time, errors and
-  partial transaction refresh warnings. There is no claim of real-time or background push.
+  refresh warnings. There is no claim of real-time or background push.
 
 Tap a monthly chart bar to select its month and see the amount. Category charts
 also select months. Explicit month buttons provide an accessible alternative to
 chart gestures. Category rows open definitions and their spending history.
 
-## Ask Ledger (Gemini)
+## Ask Minto (Gemini)
 
-The floating Ask Ledger button opens an on-demand summary sheet. Press Summarize
-this month to send only selected-month and optional comparison-month category totals
+The floating Ask Minto button, or Preview Gemini summary in Settings, opens an
+on-demand summary and immediately requests it using only selected-month and optional comparison-month category totals
 through the authenticated Python backend to Gemini. No transaction descriptions,
 friends, IDs or sheet URL enter the model payload. Summaries never alter categories,
 totals or the sheet. A summary remains labeled with the snapshot and month it analyzed.
@@ -50,7 +48,7 @@ totals or the sheet. A summary remains labeled with the snapshot and month it an
    Copy the backend `APP_API_TOKEN` from your local `.env` into the secure token field
    and Save. This is the application token, **not** the Gemini key. It is stored in
    device-only Keychain storage, never UserDefaults or source code.
-4. Tap Ask Ledger, then Summarize this month.
+4. Tap Ask Minto, or Preview Gemini summary in Settings. Regenerate is optional.
 
 For a real iPhone, localhost refers to the phone. Use an HTTPS-hosted backend, or for
 local development run Uvicorn on `0.0.0.0` and enter your Mac's reachable `.local`
@@ -85,6 +83,14 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild \
   -derivedDataPath /tmp/ledger-ios-build CODE_SIGNING_ALLOWED=NO build
 ```
 
-App Store icons, Google authorization for private sheets, multi-year tab selection,
+Google authorization for private sheets, multi-year tab selection,
 background push and production deployment are not included. The project generator is
 optional; do not regenerate over personal signing/scheme changes in Xcode.
+
+## Identity and launch
+
+The installed app is named Minto. The scheme remains Ledger and the bundle ID is
+unchanged to preserve device installs and Keychain access. The mint ribbon icon is
+compiled from Assets.xcassets; a native static LaunchScreen.storyboard uses the same
+mark and cream background with no artificial launch delay. See docs/brand/prompt.md
+for the ImageGen prompt and asset provenance.

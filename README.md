@@ -1,4 +1,8 @@
-# Splitwise Ledger
+# Minto
+
+Make room for clarity. A personal spending app with live Google Sheets totals and
+on-demand Gemini summaries. The repository and internal module names retain their
+original identifiers so existing clones, signing settings and credentials keep working.
 
 **Current focus: native iOS viewer for your manually maintained sheet.**
 The [iOS app setup and architecture](ios/README.md) describe the SwiftUI viewer,

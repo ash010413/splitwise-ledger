@@ -56,7 +56,6 @@ struct LedgerApp: App {
         WindowGroup {
             TabView {
                 DashboardView(model: model).tabItem { Label("Overview", systemImage: "square.grid.2x2") }
-                ActivityView(model: model).tabItem { Label("Activity", systemImage: "list.bullet.rectangle") }
                 SettingsView(model: model).tabItem { Label("Settings", systemImage: "slider.horizontal.3") }
             }
             .tint(teal).preferredColorScheme(.light)
@@ -86,8 +85,8 @@ struct DashboardView: View {
                             Text("A little more clarity.").font(.system(.title, design: .serif).weight(.medium))
                         }
                         Spacer()
-                        Image(systemName: "leaf.fill").font(.title2).foregroundStyle(teal)
-                            .padding(14).background(.white, in: Circle()).accessibilityHidden(true)
+                        Image("MintoMark").resizable().scaledToFit().frame(width: 52, height: 52)
+                            .clipShape(RoundedRectangle(cornerRadius: 17)).accessibilityHidden(true)
                     }
                     ConnectionNotice(model: model)
                     if let month = model.month {
@@ -110,7 +109,7 @@ struct DashboardView: View {
                                 }
                             }
                         }.padding(16).background(.white, in: RoundedRectangle(cornerRadius: 24))
-                        Text("Totals come from your monthly summary tab. Activity is shown separately and does not change these totals.")
+                        Text("Totals come directly from your monthly summary tab. Tap a category to explore its history.")
                             .font(.caption).foregroundStyle(.secondary)
                     } else if let error = model.error {
                         ContentUnavailableView { Label("Couldn’t load spending", systemImage: "wifi.exclamationmark") }
@@ -124,7 +123,7 @@ struct DashboardView: View {
             .refreshable { await model.load() }
             .safeAreaInset(edge: .bottom, alignment: .trailing) {
                 Button { showsAI = true } label: {
-                    Label("Ask Ledger", systemImage: "sparkles").font(.subheadline.bold())
+                    Label("Ask Minto", systemImage: "sparkles").font(.subheadline.bold())
                         .padding(.horizontal, 20).padding(.vertical, 14).foregroundStyle(.white)
                         .background(ink, in: Capsule()).shadow(color: ink.opacity(0.2), radius: 10, y: 4)
                 }.disabled(model.month == nil).padding(.trailing, 22).padding(.bottom, 8)
@@ -132,7 +131,7 @@ struct DashboardView: View {
             .sheet(isPresented: $showsAI) {
                 if let month = model.month { AISummaryView(month: month, previous: model.previous, fetchedAt: model.data?.fetchedAt) }
             }
-            .navigationTitle("Ledger").navigationBarTitleDisplayMode(.inline)
+            .navigationTitle("Minto").navigationBarTitleDisplayMode(.inline)
             .sheet(item: $selectedCategory) { category in
                 CategoryDetail(category: category, model: model)
             }
@@ -291,7 +290,7 @@ struct CategoryDetail: View {
                             HStack { Text("\(month.label) \(month.year)"); Spacer(); Text(month.amount(category).usd) }
                         }.foregroundStyle(month.id == model.selectedMonthID ? teal : ink).padding(.vertical, 5)
                     }
-                    Text("Summary totals are read from your sheet; transaction records may cover only part of the month.")
+                    Text("Monthly category totals are read directly from your sheet summary.")
                         .font(.subheadline).foregroundStyle(.secondary)
                 }.padding(26)
             }.background(paper).navigationTitle(category.rawValue).navigationBarTitleDisplayMode(.inline)
@@ -300,70 +299,34 @@ struct CategoryDetail: View {
     }
 }
 
-struct ActivityView: View {
+struct CategoryHistoryView: View {
+    let category: SpendCategory
     let model: LedgerModel
-    @State private var search = ""
-    @State private var filter: SpendCategory?
-    @State private var selectedEntry: LedgerEntry?
-    private var entries: [LedgerEntry] {
-        (model.data?.entries ?? []).filter {
-            (filter == nil || $0.category == filter) &&
-            (search.isEmpty || $0.description.localizedCaseInsensitiveContains(search) || ($0.category?.rawValue ?? "Needs review").localizedCaseInsensitiveContains(search))
-        }
-    }
+    private var months: [MonthSnapshot] { (model.data?.months ?? []).sorted { $0.id > $1.id } }
+    private var total: Decimal { months.reduce(0) { $0 + $1.amount(category) } }
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    ConnectionNotice(model: model)
-                    Text("Your everyday, in view.").font(.system(.title2, design: .serif))
-                    Text("Transactions read from your sheet. Your monthly summary remains the source for dashboard totals.")
-                        .font(.subheadline).foregroundStyle(.secondary)
-                    HStack {
-                        Text("Transactions").font(.headline)
-                        Spacer()
-                        Menu {
-                            Button("All categories") { filter = nil }
-                            ForEach(SpendCategory.allCases) { category in Button(category.rawValue) { filter = category } }
-                        } label: { Label(filter?.rawValue ?? "All categories", systemImage: "line.3.horizontal.decrease")
-                            .font(.caption).foregroundStyle(teal) }
-                    }
-                    if entries.isEmpty {
-                        ContentUnavailableView.search(text: search)
-                    } else {
-                        ForEach(entries) { entry in
-                            Button { selectedEntry = entry } label: {
-                                HStack(spacing: 14) {
-                                    Image(systemName: entry.category?.symbol ?? "questionmark").foregroundStyle(teal).frame(width: 44, height: 44)
-                                        .background(teal.opacity(0.08), in: RoundedRectangle(cornerRadius: 15))
-                                    VStack(alignment: .leading, spacing: 6) {
-                                        Text(entry.description).font(.subheadline.weight(.semibold))
-                                        Text("\(entry.day) · \(entry.category?.rawValue ?? "Needs review")").font(.caption).foregroundStyle(.secondary)
-                                    }
-                                    Spacer()
-                                    Text(entry.share.usd).font(.subheadline.weight(.semibold))
-                                }.padding(16).background(.white, in: RoundedRectangle(cornerRadius: 20))
-                            }.buttonStyle(.plain)
-                        }
-                    }
-                }.padding(22)
-            }.background(paper).foregroundStyle(ink).navigationTitle("Activity")
-                .refreshable { await model.load() }
-                .searchable(text: $search, prompt: "Search description or category")
-                .sheet(item: $selectedEntry) { entry in
-                    NavigationStack {
-                        Form {
-                            Section { LabeledContent("Description", value: entry.description)
-                                LabeledContent("Your share", value: entry.share.usd)
-                                LabeledContent("Category", value: entry.category?.rawValue ?? "Needs review")
-                                LabeledContent("Date", value: entry.day) }
-                            Section { Text(entry.note).foregroundStyle(.secondary)
-                                Text("This app is read-only. Update transactions and categories in your Google Sheet.") }
-                        }.navigationTitle("Transaction").navigationBarTitleDisplayMode(.inline)
-                            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { selectedEntry = nil } } }
-                    }.tint(teal)
+        List {
+            Section {
+                Label(category.rawValue, systemImage: category.symbol).font(.title3.bold()).foregroundStyle(teal)
+                Text(category.definition).font(.subheadline).foregroundStyle(.secondary)
+                LabeledContent("Total across loaded months", value: total.usd)
+                    .font(.subheadline.weight(.semibold))
+            }
+            Section {
+                if months.isEmpty {
+                    Text("Monthly totals will appear after your sheet loads.").foregroundStyle(.secondary)
                 }
-        }
+                ForEach(months) { month in
+                    HStack {
+                        Text("\(month.label) \(month.year)")
+                        Spacer()
+                        Text(month.amount(category).usd).monospacedDigit().fontWeight(.medium)
+                    }.padding(.vertical, 5)
+                }
+            } header: { Text("By month") }
+            footer: { Text("Category totals from your sheet. No individual expenses are listed.") }
+        }.scrollContentBackground(.hidden).background(paper)
+            .navigationTitle(category.rawValue).navigationBarTitleDisplayMode(.inline)
     }
 }
 
@@ -372,6 +335,7 @@ struct SettingsView: View {
     @AppStorage("analysisBackendURL") private var backendURL = "http://127.0.0.1:8000"
     @State private var appToken = ""
     @State private var tokenStatus = ""
+    @State private var showsAI = false
     var body: some View {
         NavigationStack {
             List {
@@ -385,15 +349,22 @@ struct SettingsView: View {
                 } header: { Text("Your data") }
                 Section("Categories") {
                     ForEach(SpendCategory.allCases) { category in
-                        NavigationLink { ScrollView { VStack(alignment: .leading, spacing: 20) {
-                            Label(category.rawValue, systemImage: category.symbol).font(.title2)
-                            Text(category.definition).foregroundStyle(.secondary)
-                        }.padding(24) }.navigationTitle("Category") } label: {
-                            Label(category.rawValue, systemImage: category.symbol)
+                        NavigationLink {
+                            CategoryHistoryView(category: category, model: model)
+                        } label: {
+                            HStack {
+                                Label(category.rawValue, systemImage: category.symbol)
+                                Spacer()
+                                Text((model.data?.months.reduce(Decimal.zero) { $0 + $1.amount(category) } ?? 0).usd)
+                                    .font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                            }
                         }
                     }
                 }
                 Section("Gemini summaries") {
+                    Button { showsAI = true } label: {
+                        Label("Preview Gemini summary", systemImage: "sparkles")
+                    }.disabled(model.month == nil)
                     TextField("Backend URL", text: $backendURL).textInputAutocapitalization(.never).autocorrectionDisabled()
                         .keyboardType(.URL)
                     SecureField("Backend APP_API_TOKEN", text: $appToken).textInputAutocapitalization(.never)
@@ -402,12 +373,17 @@ struct SettingsView: View {
                         else { tokenStatus = "Enter a valid backend token (at least 32 characters)." }
                     }
                     if !tokenStatus.isEmpty { Text(tokenStatus).font(.caption) }
-                    Text("The Gemini key stays in the backend .env. Ask Ledger sends only selected-month and previous-month category totals to Gemini when you request a summary. Use HTTPS for a hosted backend; localhost is for the simulator.")
+                    Text("The Gemini key stays in the backend .env. Ask Minto sends only selected-month and previous-month category totals to Gemini when you request a summary. Use HTTPS for a hosted backend; localhost is for the simulator.")
                         .font(.subheadline).foregroundStyle(.secondary)
                 }
-                Section { Text("Ledger · 0.2\nUSD · Read-only Google Sheets viewer")
+                Section { Text("Minto · 0.3\nUSD · Read-only Google Sheets viewer")
                     .font(.caption).foregroundStyle(.secondary) }
             }.scrollContentBackground(.hidden).background(paper).navigationTitle("Settings")
+                .sheet(isPresented: $showsAI) {
+                    if let month = model.month {
+                        AISummaryView(month: month, previous: model.previous, fetchedAt: model.data?.fetchedAt)
+                    }
+                }
         }.tint(teal)
     }
 }
@@ -468,7 +444,7 @@ struct AISummaryView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
-                    Label("LEDGER INTELLIGENCE", systemImage: "sparkles")
+                    Label("MINTO INTELLIGENCE", systemImage: "sparkles")
                         .font(.caption.weight(.bold)).tracking(1.6).foregroundStyle(teal)
                     Text("Your spending,\nexplained.").font(.system(.largeTitle, design: .serif).weight(.medium))
                     HStack { Text("\(month.label) \(month.year)"); Spacer(); Text(month.total.usd).bold() }
@@ -495,7 +471,7 @@ struct AISummaryView: View {
                 }.padding(26)
             }.background(paper).foregroundStyle(ink).navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
-        }.tint(teal)
+        }.tint(teal).task { await generate() }
     }
     @MainActor private func generate() async {
         guard !isLoading else { return }
@@ -527,7 +503,11 @@ struct AISummaryView: View {
                 case 401: error = "Backend token rejected. Update APP_API_TOKEN in Settings."
                 case 503: error = "Add GEMINI_API_KEY to the backend .env and restart the backend."
                 case 429: error = "A summary is already running. Please wait and try again."
-                case 502: error = "Gemini could not generate a summary. Check its key, model and quota."
+                case 502:
+                    let detail = (try? JSONSerialization.jsonObject(with: data)) as? [String: String]
+                    error = detail?["detail"] == "Gemini timed out. Please try again later."
+                        ? "Gemini timed out. Please try again later."
+                        : "Gemini could not generate a summary. Check its key, model and quota."
                 default: error = "Summary request failed (HTTP \(http.statusCode))."
                 }
                 return

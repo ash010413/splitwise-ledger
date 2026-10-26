@@ -13,7 +13,7 @@ flowchart LR
     Sheet --> Repository[SheetsLedgerRepository]
     Repository --> Model[Main-actor view model]
     Model --> Dashboard[Overview and category charts]
-    Model --> Activity[Search and transaction details]
+    Model --> Settings[Monthly category totals]
     Model -->|On demand: category aggregates only| Backend[Authenticated summary endpoint]
     Backend --> Gemini[Gemini API]
 ```
@@ -21,7 +21,7 @@ flowchart LR
 Sheets refreshes on foreground entry, every 60 seconds while foreground and by
 pull-to-refresh. Strict CSV/schema/Decimal validation reconciles monthly totals
 before replacing the snapshot. Last successful data is cached offline. Activity
-remains separate from summary totals, and signed amounts are preserved visibly.
+and transaction fetching are currently disabled; Settings shows category totals by month.
 The AI summary receives aggregate data only, never transaction descriptions or
 friend identifiers; it cannot mutate spending records. A missing Gemini key does
 not prevent Sheets reads. The backend keeps the key server-side and the iOS app
