@@ -8,6 +8,7 @@ from decimal import Decimal
 
 import httpx
 from authlib.integrations.base_client.errors import OAuthError
+from authlib.oauth2.rfc6749 import OAuth2Error
 from cryptography.fernet import Fernet
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -34,6 +35,25 @@ class Review(BaseModel):
     revision: str
     category: Category
     remember_rule: bool = False
+
+
+def oauth_failure(stage: str, error: Exception) -> str:
+    """Describe only allowlisted metadata; provider error bodies may contain secrets."""
+    if isinstance(error, httpx.HTTPStatusError):
+        return f"Splitwise {stage} failed (HTTP {error.response.status_code}). Restart connection."
+    if isinstance(error, httpx.RequestError):
+        return f"Splitwise {stage} failed: network connection or timeout. Restart connection."
+    code = getattr(error, "error", None)
+    if code in {
+        "invalid_client",
+        "invalid_grant",
+        "invalid_request",
+        "unauthorized_client",
+        "access_denied",
+        "unsupported_grant_type",
+    }:
+        return f"Splitwise {stage} failed ({code}). Check client credentials and callback URL."
+    return f"Splitwise {stage} failed: invalid provider response. Restart connection."
 
 
 def create_app(settings: Settings | None = None, provider=None) -> FastAPI:
@@ -92,9 +112,12 @@ def create_app(settings: Settings | None = None, provider=None) -> FastAPI:
             raise HTTPException(400, "Splitwise authorization was not completed")
         try:
             token = await provider.exchange(code)
+        except (httpx.HTTPError, OAuthError, OAuth2Error, ValueError, KeyError) as exc:
+            raise HTTPException(502, oauth_failure("token exchange", exc)) from None
+        try:
             user_id = await provider.current_user(token)
-        except (httpx.HTTPError, OAuthError, ValueError, KeyError):
-            raise HTTPException(502, "OAuth exchange or account lookup failed") from None
+        except (httpx.HTTPError, OAuthError, OAuth2Error, ValueError, KeyError) as exc:
+            raise HTTPException(502, oauth_failure("account lookup", exc)) from None
         old_user = store.get("user_id")
         if old_user is not None and old_user != user_id:
             raise HTTPException(409, "Different account connected; use a separate database")

@@ -36,6 +36,26 @@ def main():
             timeout=300,
         )
         response.raise_for_status()
+    except httpx.ConnectError:
+        raise SystemExit(
+            "Cannot connect to the backend at http://127.0.0.1:8000. "
+            "Start it with: .venv/bin/uvicorn splitwise_ledger.api:create_app "
+            "--factory --host 127.0.0.1 --no-access-log"
+        ) from None
+    except httpx.HTTPStatusError as exc:
+        messages = {
+            401: "Application token mismatch. Restart the backend after changing .env.",
+            503: "The running backend has no Splitwise OAuth credentials. "
+            "Set them in .env and restart the backend to load the changes.",
+            409: "Connection or sync state prevents this request. "
+            "For sync, reconnect Splitwise if the token has expired.",
+            502: "The backend could not complete the Splitwise request. "
+            "Check the provider connection and retry.",
+        }
+        raise SystemExit(
+            f"HTTP {exc.response.status_code}: "
+            + messages.get(exc.response.status_code, "Backend request failed.")
+        ) from None
     except httpx.HTTPError:
         raise SystemExit(
             "Request failed. Check the local server, configuration and connection."

@@ -1,5 +1,6 @@
 from urllib.parse import parse_qs, urlparse
 
+import httpx
 import pytest
 from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
@@ -99,3 +100,31 @@ def test_tokens_are_encrypted_at_rest(client, tmp_path):
     state = connect(client)
     client.get(f"/oauth/splitwise/callback?state={state}&code=valid-code")
     assert b"private-provider-token" not in (tmp_path / "ledger.db").read_bytes()
+
+
+@pytest.mark.parametrize(
+    "stage,method",
+    [
+        ("token exchange", "exchange"),
+        ("account lookup", "current_user"),
+    ],
+)
+def test_oauth_reports_stage_and_status_without_leaking_provider_body(
+    client,
+    monkeypatch,
+    stage,
+    method,
+):
+    async def fail(*args):
+        response = httpx.Response(
+            403, text="secret-provider-body", request=httpx.Request("POST", "https://test")
+        )
+        response.raise_for_status()
+
+    monkeypatch.setattr(FakeProvider, method, fail)
+    state = connect(client)
+    response = client.get(f"/oauth/splitwise/callback?state={state}&code=valid-code")
+    assert response.status_code == 502
+    assert stage in response.json()["detail"]
+    assert "403" in response.json()["detail"]
+    assert "secret-provider-body" not in response.text
