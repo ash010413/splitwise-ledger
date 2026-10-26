@@ -1,5 +1,22 @@
 # Architecture and data correctness
 
+## Current product direction
+
+The user now maintains the Google Sheet manually. The immediate deliverable is the
+native read-only iOS app under `ios/`, using an explicitly labeled snapshot until
+sheet fetching is connected. See `ios/README.md`. Splitwise ingestion and category
+automation below are retained as future design work, not prerequisites for the viewer.
+
+```mermaid
+flowchart LR
+    Manual[User updates Google Sheet] --> Sheet[Existing monthly summary and transactions]
+    Sheet -. future read-only adapter .-> Repository[LedgerRepository]
+    Preview[Current labeled preview dataset] --> Repository
+    Repository --> Model[Main-actor view model]
+    Model --> Dashboard[Overview and category charts]
+    Model --> Activity[Search and transaction details]
+```
+
 ## Scope
 
 A personal, single-account iOS expense tracker. Splitwise supplies transactions and

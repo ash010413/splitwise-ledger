@@ -1,5 +1,10 @@
 # Splitwise Ledger
 
+**Current focus: native iOS viewer for your manually maintained sheet.**
+The [iOS app setup and architecture](ios/README.md) describe the runnable SwiftUI
+preview. Live fetching and Gemini are deferred. The backend below is retained for
+future integration and is not required to run the iOS app.
+
 Personal expense tracking using **your Splitwise share**, approved category rules,
 and explicit review for uncertainty. Initial backend scaffold; live OAuth access,
 Google Sheets writes, scheduling and the native iOS client are not yet verified or shipped.
