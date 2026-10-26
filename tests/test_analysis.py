@@ -40,6 +40,7 @@ def test_gemini_uses_header_secret_and_only_aggregate_payload(monkeypatch):
         assert req.headers["x-goog-api-key"] == "private-test-key"
         assert "private-test-key" not in str(req.url)
         body = json.loads(req.content)
+        assert body["generationConfig"]["thinkingConfig"] == {"thinkingLevel": "low"}
         facts = json.loads(body["contents"][0]["parts"][0]["text"])
         assert facts["selected"]["total"] == "123.00"
         return httpx.Response(
@@ -63,7 +64,10 @@ def test_gemini_uses_header_secret_and_only_aggregate_payload(monkeypatch):
             **kw,
         ),
     )
-    assert asyncio.run(summarize(request(), "private-test-key", "test-model")) == "A short summary."
+    assert (
+        asyncio.run(summarize(request(), "private-test-key", "gemini-3.8-flash"))
+        == "A short summary."
+    )
 
 
 def test_blocked_or_incomplete_model_result_is_not_a_summary(monkeypatch):

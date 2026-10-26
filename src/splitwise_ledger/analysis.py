@@ -44,6 +44,9 @@ class AnalysisRequest(BaseModel):
 
 
 async def summarize(request: AnalysisRequest, key: str, model: str) -> str:
+    generation = {"maxOutputTokens": 2048, "temperature": 0.2}
+    if model.startswith("gemini-3"):
+        generation["thinkingConfig"] = {"thinkingLevel": "low"}
     async with httpx.AsyncClient(timeout=60) as client:
         response = await client.post(
             f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
@@ -66,7 +69,7 @@ async def summarize(request: AnalysisRequest, key: str, model: str) -> str:
                     ]
                 },
                 "contents": [{"role": "user", "parts": [{"text": json.dumps(request.facts())}]}],
-                "generationConfig": {"maxOutputTokens": 1600, "temperature": 0.2},
+                "generationConfig": generation,
             },
         )
         response.raise_for_status()

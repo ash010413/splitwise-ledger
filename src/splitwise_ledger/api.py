@@ -100,10 +100,15 @@ def create_app(settings: Settings | None = None, provider=None) -> FastAPI:
             try:
                 result = await summarize(body, settings.gemini_api_key, settings.gemini_model)
             except httpx.HTTPStatusError as exc:
-                detail = "Gemini request failed. Check the backend key and configured model."
+                detail = (
+                    f"Gemini request failed (HTTP {exc.response.status_code}). "
+                    "Check the backend key and configured model."
+                )
                 if exc.response.status_code == 429:
                     detail = "Gemini quota or rate limit reached. Try again later."
                 raise HTTPException(502, detail) from None
+            except httpx.TimeoutException:
+                raise HTTPException(502, "Gemini timed out. Please try again later.") from None
             except (httpx.HTTPError, ValueError, KeyError):
                 raise HTTPException(
                     502, "Gemini could not return a complete summary. Try again."

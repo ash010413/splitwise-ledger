@@ -63,6 +63,9 @@ The backend serializes model requests and caches the latest identical aggregate
 request for five minutes. It returns actionable missing-key, auth and provider errors
 without logging secret-bearing provider bodies. Gemini outputs are advisory; months
 may be incomplete. The monthly figures remain the deterministic source of truth.
+Gemini 3 models use low thinking for these short summaries. Model listing accepted
+the configured key during integration, but live generation requests timed out; a
+successful end-to-end model summary has not yet been verified in this environment.
 
 ## Architecture and checks
 
