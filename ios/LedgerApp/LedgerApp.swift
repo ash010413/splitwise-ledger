@@ -1,6 +1,7 @@
 import SwiftUI
 import Charts
 import Security
+import CryptoKit
 
 private let ink = Color(red: 0.10, green: 0.19, blue: 0.18)
 private let teal = Color(red: 0.16, green: 0.45, blue: 0.37)
@@ -12,10 +13,10 @@ final class LedgerModel {
     var error: String?
     var selectedMonthID = ""
     var isRefreshing = false
-    private let cacheURL = URL.cachesDirectory.appending(path: "ledger-sheets-v1.json")
+    private let cacheURL = URL.cachesDirectory.appending(path: "ledger-sheets-\(SheetConnection.cacheKey).json")
     private let repository: any LedgerRepository
-    init(repository: any LedgerRepository = SheetsLedgerRepository()) {
-        self.repository = repository
+    init(repository: (any LedgerRepository)? = nil) {
+        self.repository = repository ?? SheetsLedgerRepository(sheetID: SheetConnection.sheetID, summaryTab: SheetConnection.summaryTab)
         if let cached = try? Data(contentsOf: cacheURL),
            let snapshot = try? JSONDecoder().decode(LedgerDataset.self, from: cached), !snapshot.isPreview {
             data = snapshot
@@ -23,9 +24,13 @@ final class LedgerModel {
         }
     }
     var month: MonthSnapshot? { data?.summary(for: selectedMonthID) }
+    fileprivate func makeSummaryScope() -> SummaryScope? {
+        guard let data, let month else { return nil }
+        return SummaryScope(month: month, previous: previous, fetchedAt: data.fetchedAt,
+                            coveredMonths: data.months.map(\.id))
+    }
     var previous: MonthSnapshot? {
-        guard let months = data?.months, let index = months.firstIndex(where: { $0.id == selectedMonthID }), index > 0 else { return nil }
-        return months[index - 1]
+        data?.previousMonth(before: selectedMonthID)
     }
     func load() async {
         guard !isRefreshing else { return }
@@ -74,7 +79,8 @@ struct LedgerApp: App {
 struct DashboardView: View {
     @Bindable var model: LedgerModel
     @State private var selectedCategory: SpendCategory?
-    @State private var showsAI = false
+    @ScaledMetric(relativeTo: .body) private var chartHeight = 150.0
+    @State private var summaryScope: SummaryScope?
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -97,7 +103,7 @@ struct DashboardView: View {
                         HStack {
                             Text("Where it went").font(.title3.bold())
                             Spacer()
-                            Text("12 categories").font(.caption).foregroundStyle(.secondary)
+                            Text("\(month.amounts.count) categories").font(.caption).foregroundStyle(.secondary)
                         }
                         VStack(spacing: 0) {
                             ForEach(SpendCategory.allCases.sorted { month.amount($0) > month.amount($1) }) { category in
@@ -122,14 +128,14 @@ struct DashboardView: View {
             .background(paper).foregroundStyle(ink)
             .refreshable { await model.load() }
             .safeAreaInset(edge: .bottom, alignment: .trailing) {
-                Button { showsAI = true } label: {
+                Button { summaryScope = model.makeSummaryScope() } label: {
                     Label("Ask Minto", systemImage: "sparkles").font(.subheadline.bold())
                         .padding(.horizontal, 20).padding(.vertical, 14).foregroundStyle(.white)
                         .background(ink, in: Capsule()).shadow(color: ink.opacity(0.2), radius: 10, y: 4)
                 }.disabled(model.month == nil).padding(.trailing, 22).padding(.bottom, 8)
             }
-            .sheet(isPresented: $showsAI) {
-                if let month = model.month { AISummaryView(month: month, previous: model.previous, fetchedAt: model.data?.fetchedAt, coveredMonths: model.data?.months.map(\.id) ?? []) }
+            .sheet(item: $summaryScope) { scope in
+                AISummaryView(month: scope.month, previous: scope.previous, fetchedAt: scope.fetchedAt, coveredMonths: scope.coveredMonths)
             }
             .navigationTitle("Minto").navigationBarTitleDisplayMode(.inline)
             .sheet(item: $selectedCategory) { category in
@@ -183,10 +189,10 @@ struct DashboardView: View {
             .modifier(MonthChartSelection(months: model.data?.months ?? [], selectedMonthID: $model.selectedMonthID))
             .chartYAxis { AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) { value in
                 AxisGridLine().foregroundStyle(ink.opacity(0.06))
-                AxisValueLabel { if let amount = value.as(Double.self) { Text("$\(Int(amount / 1000))k").font(.caption2) } }
+                AxisValueLabel { if let amount = value.as(Double.self) { Text(amount, format: .currency(code: "USD").precision(.fractionLength(0))).font(.caption2) } }
             }}
             .chartXAxis { AxisMarks { _ in AxisValueLabel().font(.caption) } }
-            .frame(height: 150)
+            .frame(height: chartHeight)
             if let selected = model.month {
                 Text("\(selected.displayLabel) · \(selected.total.usd)")
                     .font(.caption.weight(.semibold)).foregroundStyle(teal)
@@ -293,6 +299,7 @@ struct CategoryRow: View {
 struct CategoryDetail: View {
     let category: SpendCategory
     @Bindable var model: LedgerModel
+    @ScaledMetric(relativeTo: .body) private var chartHeight = 180.0
     @Environment(\.dismiss) private var dismiss
     var body: some View {
         NavigationStack {
@@ -307,7 +314,7 @@ struct CategoryDetail: View {
                         BarMark(x: .value("Month", month.shortLabel), y: .value("Amount", month.amount(category).chartValue))
                             .foregroundStyle(teal).cornerRadius(5)
                     }.modifier(MonthChartSelection(months: model.data?.months ?? [], selectedMonthID: $model.selectedMonthID))
-                        .frame(height: 180)
+                        .frame(height: chartHeight)
                     Text("Tap a bar to view that month’s category amount.").font(.caption).foregroundStyle(teal)
                     ForEach(model.data?.months ?? []) { month in
                         Button { model.selectedMonthID = month.id } label: {
@@ -356,7 +363,7 @@ struct CategoryHistoryView: View {
 
 struct SettingsView: View {
     let model: LedgerModel
-    @State private var showsAI = false
+    @State private var summaryScope: SummaryScope?
     var body: some View {
         NavigationStack {
             List {
@@ -364,7 +371,7 @@ struct SettingsView: View {
                     Label("Google Sheets", systemImage: "tablecells").font(.headline)
                     LabeledContent("Connection", value: model.data == nil ? "Not loaded" : "Read-only")
                     Button("Refresh now") { Task { await model.load() } }.disabled(model.isRefreshing)
-                    Link("Open Google Sheet", destination: URL(string: "https://docs.google.com/spreadsheets/d/\(SheetsLedgerRepository.sheetID)/edit")!)
+                    Link("Open Google Sheet", destination: URL(string: "https://docs.google.com/spreadsheets/d/\(SheetConnection.sheetID)/edit")!)
                     Text("Refreshes on launch, when returning to the app, every minute while open, and with pull-to-refresh. Last successful data is cached offline.")
                         .font(.subheadline).foregroundStyle(.secondary)
                 } header: { Text("Your data") }
@@ -383,7 +390,7 @@ struct SettingsView: View {
                     }
                 }
                 Section("Gemini summaries") {
-                    Button { showsAI = true } label: {
+                    Button { summaryScope = model.makeSummaryScope() } label: {
                         Label("Preview Gemini summary", systemImage: "sparkles")
                     }.disabled(model.month == nil)
                     Text("Ask Minto summarizes your monthly category totals on demand. Your sheet and categories stay unchanged.")
@@ -392,12 +399,32 @@ struct SettingsView: View {
                 Section { Text("Minto · 0.3\nUSD · Read-only Google Sheets viewer")
                     .font(.caption).foregroundStyle(.secondary) }
             }.scrollContentBackground(.hidden).background(paper).navigationTitle("Settings")
-                .sheet(isPresented: $showsAI) {
-                    if let month = model.month {
-                        AISummaryView(month: month, previous: model.previous, fetchedAt: model.data?.fetchedAt, coveredMonths: model.data?.months.map(\.id) ?? [])
-                    }
+                .sheet(item: $summaryScope) { scope in
+                    AISummaryView(month: scope.month, previous: scope.previous, fetchedAt: scope.fetchedAt, coveredMonths: scope.coveredMonths)
                 }
         }.tint(teal)
+    }
+}
+
+/// Freeze the requested figures so background refresh cannot relabel an old AI result.
+private struct SummaryScope: Identifiable {
+    let id = UUID()
+    let month: MonthSnapshot
+    let previous: MonthSnapshot?
+    let fetchedAt: Date
+    let coveredMonths: [String]
+}
+
+@MainActor private enum SheetConnection {
+    private static func value(_ key: String) -> String {
+        let value = (Bundle.main.object(forInfoDictionaryKey: key) as? String ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.hasPrefix("$(") ? "" : value
+    }
+    static var sheetID: String { value("MintoSheetID") }
+    static var summaryTab: String { value("MintoSummaryTab") }
+    static var cacheKey: String {
+        SHA256.hash(data: Data("\(sheetID)|\(summaryTab)".utf8)).map { String(format: "%02x", $0) }.joined()
     }
 }
 

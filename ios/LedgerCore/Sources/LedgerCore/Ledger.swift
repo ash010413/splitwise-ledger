@@ -66,6 +66,17 @@ public struct LedgerDataset: Sendable, Codable {
     public let isPreview: Bool
     public var fetchedAt: Date = Date()
     public var warnings: [String] = []
+    public func previousMonth(before id: String) -> MonthSnapshot? {
+        let parts = id.split(separator: "-").compactMap { Int($0) }
+        guard parts.count == 2 else { return nil }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        guard let date = calendar.date(from: DateComponents(year: parts[0], month: parts[1], day: 1)),
+              let previous = calendar.date(byAdding: .month, value: -1, to: date) else { return nil }
+        let components = calendar.dateComponents([.year, .month], from: previous)
+        let previousID = String(format: "%04d-%02d", components.year!, components.month!)
+        return months.first { $0.id == previousID }
+    }
     public func summary(for selection: String) -> MonthSnapshot? {
         guard selection == "all" else { return months.first { $0.id == selection } }
         guard !months.isEmpty else { return nil }
@@ -94,7 +105,7 @@ public struct PreviewLedgerRepository: LedgerRepository {
     public init() {}
     public func load() async throws -> LedgerDataset { Self.dataset }
     public static let dataset: LedgerDataset = {
-        // Synthetic public sample values.
+        // Synthetic data only; never embed a user's financial history in the app or repo.
         let values = (1...4).map { month in
             (1...12).map { category in String(month * category * 10) }
         }
@@ -257,10 +268,14 @@ public enum SheetParser {
 }
 
 public struct SheetsLedgerRepository: LedgerRepository {
-    public static let sheetID = "EXAMPLE_SHEET_ID"
-    public init() {}
+    public let sheetID: String
+    public let summaryTab: String
+    public init(sheetID: String, summaryTab: String) {
+        self.sheetID = sheetID
+        self.summaryTab = summaryTab
+    }
     private func fetch(tab: String) async throws -> String {
-        var url = URLComponents(string: "https://docs.google.com/spreadsheets/d/\(Self.sheetID)/gviz/tq")!
+        var url = URLComponents(string: "https://docs.google.com/spreadsheets/d/\(sheetID)/gviz/tq")!
         url.queryItems = [URLQueryItem(name: "tqx", value: "out:csv"), URLQueryItem(name: "sheet", value: tab),
                           URLQueryItem(name: "_", value: UUID().uuidString)]
         var request = URLRequest(url: url.url!, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 30)
@@ -274,7 +289,9 @@ public struct SheetsLedgerRepository: LedgerRepository {
         return text
     }
     public func load() async throws -> LedgerDataset {
-        let months = try await SheetParser.summary(fetch(tab: "2026"))
+        guard sheetID.range(of: #"^[A-Za-z0-9_-]+$"#, options: .regularExpression) != nil,
+              !summaryTab.isEmpty else { throw SheetError.invalid("The spending sheet is not configured for this build.") }
+        let months = try await SheetParser.summary(fetch(tab: summaryTab))
         // Transaction ingestion is deferred until Splitwise integration is ready.
         return LedgerDataset(months: months, entries: [], isPreview: false)
     }

@@ -1,6 +1,7 @@
 """Composition root and authenticated HTTP boundary for the single-user prototype."""
 
 import asyncio
+import hashlib
 import json
 import secrets
 import time
@@ -30,8 +31,10 @@ class Settings(BaseSettings):
     app_api_token: str = Field(min_length=32)
     token_encryption_key: str
     database_path: str = "data/ledger.sqlite3"
+    google_sheet_id: str = ""
+    google_summary_tab: str = ""
     gemini_api_key: str = ""
-    gemini_model: str = Field(default="gemini-3.8-flash", pattern=r"^[a-zA-Z0-9.-]+$")
+    gemini_model: str = Field(default="gemini-3.5-flash-lite", pattern=r"^[a-zA-Z0-9.-]+$")
 
 
 class Review(BaseModel):
@@ -90,7 +93,9 @@ def create_app(settings: Settings | None = None, provider=None) -> FastAPI:
     async def analyze(body: AnalysisRequest):
         if not settings.gemini_api_key:
             raise HTTPException(503, "Add GEMINI_API_KEY to the backend .env and restart it.")
-        fingerprint = body.model_dump_json()
+        fingerprint = hashlib.sha256(
+            json.dumps(body.facts(), sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
         cached = analysis_cache.get(fingerprint)
         if cached and time.time() - cached["created"] < 300:
             return cached["response"]

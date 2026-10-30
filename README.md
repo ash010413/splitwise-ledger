@@ -90,3 +90,25 @@ for development, not an App Store release. No Google Sheets authorization or wri
 deployed scheduler, iOS app, push notifications, token auto-refresh, mixed-category
 allocations or production deletion reconciliation yet. The architecture document
 defines these next steps and the financial invariants they must preserve.
+
+## Public source, private data
+
+The repository includes only synthetic sample expenses. Keep your personal Sheet ID,
+summary-tab name, Gemini key, application token and OAuth secrets in the ignored
+`.env`, using `.env.example` as the template. Run:
+
+```sh
+.venv/bin/python tools/configure_ios_backend.py
+```
+
+This generates ignored, machine-specific Xcode configuration. The dashboard uses
+real sheet rows only; examples are never substituted when a refresh fails. Currency
+is intentionally USD and the twelve categories follow the documented personal
+schema. Months, totals, labels, category counts, chart hit targets and summary scope
+are data-driven. Configure the summary tab rather than editing a hardcoded year.
+
+Before publishing changes, audit reachable history without displaying secrets:
+
+```sh
+.venv/bin/python tools/check_public_history.py --env .env
+```

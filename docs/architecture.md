@@ -126,7 +126,7 @@ correctness. If AI is added later, its output remains a suggestion requiring rev
 
 ## Sheets integration plan
 
-Preserve the existing `2026` and `Transactions` tabs. The current transaction columns
+Use the configured summary tab and optional future Transactions tab. The current transaction columns
 are Date, Description, Category, My Share, Total Cost, Group / Friend and Expense ID.
 The integration must use the exact domain category names, positive consumption
 amounts for ordinary expenses, and Expense ID as the upsert key. Add currency,

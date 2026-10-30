@@ -76,6 +76,39 @@ def test_analysis_requires_auth_and_reports_missing_key(client):
     assert "GEMINI_API_KEY" in response.json()["detail"]
 
 
+def test_analysis_cache_uses_facts_not_dictionary_order(tmp_path, monkeypatch):
+    import splitwise_ledger.api as api
+    from splitwise_ledger.domain import Category
+
+    calls = []
+
+    async def fake_summary(body, key, model):
+        calls.append(body.current.month)
+        return "A factual summary."
+
+    monkeypatch.setattr(api, "summarize", fake_summary)
+    settings = Settings(
+        _env_file=None,
+        app_api_token="a" * 32,
+        gemini_api_key="test-key",
+        token_encryption_key=Fernet.generate_key().decode(),
+        database_path=str(tmp_path / "analysis.db"),
+    )
+    amounts = {c.value: "1.00" for c in Category}
+    with TestClient(create_app(settings)) as client:
+        for values in [amounts, dict(reversed(list(amounts.items())))]:
+            response = client.post(
+                "/analysis",
+                headers=AUTH,
+                json={
+                    "current": {"month": "2026-10", "amounts": values},
+                },
+            )
+            assert response.status_code == 200
+            assert response.json()["summary"] == "A factual summary."
+    assert calls == ["2026-10"]
+
+
 def test_oauth_state_cookie_required_and_state_is_one_use(client):
     state = connect(client)
     assert client.get("/oauth/splitwise/callback?state=wrong&code=valid-code").status_code == 400

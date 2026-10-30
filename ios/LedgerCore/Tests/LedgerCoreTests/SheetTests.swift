@@ -54,7 +54,11 @@ private func fixture() -> String {
 
 @Test func liveSheetReadWhenExplicitlyEnabled() async throws {
     guard ProcessInfo.processInfo.environment["LEDGER_LIVE_SHEETS"] == "1" else { return }
-    let data = try await SheetsLedgerRepository().load()
+    let environment = ProcessInfo.processInfo.environment
+    let data = try await SheetsLedgerRepository(
+        sheetID: environment["GOOGLE_SHEET_ID"] ?? "",
+        summaryTab: environment["GOOGLE_SUMMARY_TAB"] ?? ""
+    ).load()
     #expect(!data.isPreview)
     #expect(!data.months.isEmpty)
     #expect(data.months.allSatisfy { $0.amounts.count == 12 })

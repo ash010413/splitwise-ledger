@@ -37,3 +37,11 @@ import Foundation
     #expect(ChartHitTesting.nearestIndex(at: .nan, centers: centers) == nil)
     #expect(ChartHitTesting.nearestIndex(at: 0, centers: []) == nil)
 }
+
+@Test func previousMonthRequiresAnActualAdjacentCalendarMonth() {
+    let original = PreviewLedgerRepository.dataset
+    #expect(original.previousMonth(before: "2026-10")?.id == "2026-09")
+    let sparse = LedgerDataset(months: [original.months[0], original.months[3]], entries: [], isPreview: true)
+    #expect(sparse.previousMonth(before: "2026-10") == nil)
+    #expect(original.previousMonth(before: "all") == nil)
+}

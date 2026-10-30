@@ -10,9 +10,12 @@ The app reads the existing shared spreadsheet directly over HTTPS, using its cur
 Anyone-with-the-link viewing access. No Google credentials, backend, AI key or sheet
 edits are required for the dashboard. Sharing permissions are not changed by the app.
 If access is restricted later, add a Google authorization adapter; do not silently
-fall back to preview numbers. `SheetsLedgerRepository.sheetID` identifies the sheet.
+fall back to preview numbers. Set `GOOGLE_SHEET_ID` and `GOOGLE_SUMMARY_TAB` in
+the ignored `.env`, then run `.venv/bin/python tools/configure_ios_backend.py`
+before building. This creates local Xcode configuration; no live Sheet ID or
+personal totals are included in the public source.
 
-- Summary tab: `2026`. Category rows must match the twelve configured category names.
+- Summary tab comes from local configuration. Category rows match the twelve user-defined categories.
 - Month headers: `Jul 2026` format; Average and YTD columns are not imported as months.
 - Monthly category sums must exactly match `Total Monthly Expenses`. Invalid data
   leaves the previous successful snapshot intact and displays an error.
@@ -43,7 +46,7 @@ friends, IDs or sheet URL enter the model payload. Summaries never alter categor
 totals or the sheet. A summary remains labeled with the snapshot and month it analyzed.
 
 1. Add `GEMINI_API_KEY` to the repository's ignored `.env`. Optional `GEMINI_MODEL`
-   defaults to `gemini-3.8-flash`; choose another supported model if your project requires it.
+   defaults to `gemini-3.5-flash-lite`; choose another supported model if your project requires it.
 2. Start or restart the backend from the repository root:
 
    ```sh
@@ -86,9 +89,9 @@ The backend serializes model requests and caches the latest identical aggregate
 request for five minutes. It returns actionable missing-key, auth and provider errors
 without logging secret-bearing provider bodies. Gemini outputs are advisory; months
 may be incomplete. The monthly figures remain the deterministic source of truth.
-Gemini 3 models use low thinking for these short summaries. Model listing accepted
-the configured key during integration, but live generation requests timed out; a
-successful end-to-end model summary has not yet been verified in this environment.
+The default Flash-Lite model was verified with a live summary request. Larger Gemini 3
+models use low thinking; provider requests have bounded timeouts. Cache keys use
+canonical facts, so reordered JSON category keys do not cause duplicate generations.
 
 ## Architecture and checks
 
