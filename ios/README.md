@@ -1,3 +1,14 @@
+## Splitwise OAuth beta
+
+New builds open on **Continue with Splitwise**. Use the existing Minto app and
+signing configuration; no separate app or repository is needed. See
+[the OAuth setup guide](../docs/splitwise-beta.md) for the registered callback,
+local server setup, account isolation and remaining live checks. The Expenses tab
+shows personal shares and category review. Settings selects currency; currencies
+are never merged. OAuth sessions replace the manually provisioned summary token.
+
+The Google Sheets instructions below describe the retained earlier prototype.
+
 # Minto for iOS
 
 Native SwiftUI app, iOS 17+ and Xcode 16+. Open `LedgerApp.xcodeproj`, choose the
@@ -23,7 +34,7 @@ personal totals are included in the public source.
 - Settings category pages show each monthly total and a total across loaded months.
 - Currency is USD. Invalid currency formats, blank amounts, duplicate IDs, malformed
   CSV, invalid dates and incomplete category rows fail validation rather than becoming zero.
-- Refresh on launch, foreground entry, every 60 seconds while foreground, and pull-to-refresh.
+- Legacy sheet reads refresh on launch, foreground entry and pull-to-refresh.
 - Last successful snapshot is cached locally. The UI displays fetch time, errors and
   refresh warnings. There is no claim of real-time or background push.
 
@@ -122,3 +133,27 @@ unchanged to preserve device installs and Keychain access. The mint ribbon icon 
 compiled from Assets.xcassets; a native static LaunchScreen.storyboard uses the same
 mark and cream background with no artificial launch delay. See docs/brand/prompt.md
 for the ImageGen prompt and asset provenance.
+
+## Chart periods and automatic category matching
+
+Overview and category charts show six months by default, with 3M/6M/12M controls
+and arrows for historical periods. The graph window does not change All months totals.
+
+Gemini checks remaining expenses against the user-defined taxonomy, in batches while
+the app is open. Expenses shows matching progress, a pause action and editable Gemini
+matches. Only uncertain purchases remain for manual review. For this feature,
+descriptions and existing category labels are sent to Gemini through the server;
+summary generation continues to use aggregates. Keys remain on the backend.
+
+## Daily sync and category review
+
+Signed-out users see the OAuth welcome screen; signed-in users retain the dashboard.
+Automatic Splitwise imports are limited to once per 24 hours per account, with a daily
+backend worker while the server is running. Pull-to-refresh and Settings → Sync now
+force an immediate import. Opening the app reads the latest backend data and performs
+an import only if due. Choosing categories or changing currency does not fetch Splitwise.
+
+Uncertain purchases appear in a dismissible review sheet and an Overview review card.
+Choices can be remembered; skipped purchases remain visibly pending. Selecting a
+category shows its expenses for the selected month. Category history rows also open
+month-specific expense lists, with personal shares that reconcile to the totals.

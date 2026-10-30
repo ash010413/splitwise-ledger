@@ -4,6 +4,7 @@ public enum SpendCategory: String, CaseIterable, Identifiable, Sendable, Codable
     case home = "Home", car = "Car", travel = "Flights / Travel", dining = "Food / Dining"
     case groceries = "Groceries", misc = "Misc", entertainment = "Movie / Entertainment"
     case phone = "Phone", ai = "AI", sports = "Badminton / Sports", gym = "Gym", lux = "Lux"
+    case others = "Others"
     public var id: String { rawValue }
     public var symbol: String {
         switch self {
@@ -19,6 +20,7 @@ public enum SpendCategory: String, CaseIterable, Identifiable, Sendable, Codable
         case .sports: "figure.badminton"
         case .gym: "dumbbell.fill"
         case .lux: "bag.fill"
+        case .others: "tray.fill"
         }
     }
     public var definition: String {
@@ -35,6 +37,7 @@ public enum SpendCategory: String, CaseIterable, Identifiable, Sendable, Codable
         case .sports: "Badminton and other sports expenses."
         case .gym: "Gym membership and subscription."
         case .lux: "Extra discretionary purchases for yourself."
+        case .others: "Historical expenses that remained unclear after Gemini matching. You can recategorize these anytime."
         }
     }
 }
@@ -43,7 +46,9 @@ public struct MonthSnapshot: Identifiable, Sendable, Codable {
     public let id: String
     public let label: String
     public let amounts: [SpendCategory: Decimal]
-    public var total: Decimal { amounts.values.reduce(0, +) }
+    public var pendingAmount: Decimal? = nil
+    public var currency: String? = nil
+    public var total: Decimal { amounts.values.reduce(0, +) + (pendingAmount ?? 0) }
     public var year: String { id == "all" ? "" : String(id.prefix(4)) }
     public var displayLabel: String { id == "all" ? "All months" : "\(label) \(year)" }
     public var shortLabel: String { String(label.prefix(3)) + " " + year.suffix(2) }
@@ -66,6 +71,10 @@ public struct LedgerDataset: Sendable, Codable {
     public let isPreview: Bool
     public var fetchedAt: Date = Date()
     public var warnings: [String] = []
+    public func expenses(in category: SpendCategory, monthID: String) -> [LedgerEntry] {
+        entries.filter { $0.category == category && (monthID == "all" || $0.monthID == monthID) }
+            .sorted { $0.day == $1.day ? $0.id > $1.id : $0.day > $1.day }
+    }
     public func previousMonth(before id: String) -> MonthSnapshot? {
         let parts = id.split(separator: "-").compactMap { Int($0) }
         guard parts.count == 2 else { return nil }
@@ -83,7 +92,9 @@ public struct LedgerDataset: Sendable, Codable {
         let amounts = Dictionary(uniqueKeysWithValues: SpendCategory.allCases.map { category in
             (category, months.reduce(Decimal.zero) { $0 + $1.amount(category) })
         })
-        return MonthSnapshot(id: "all", label: "All months", amounts: amounts)
+        return MonthSnapshot(id: "all", label: "All months", amounts: amounts,
+                             pendingAmount: months.reduce(Decimal.zero) { $0 + ($1.pendingAmount ?? 0) },
+                             currency: months.first?.currency)
     }
 }
 
@@ -93,6 +104,25 @@ public enum ChartHitTesting {
         guard position.isFinite else { return nil }
         return centers.indices.filter { centers[$0].isFinite }
             .min { abs(centers[$0] - position) < abs(centers[$1] - position) }
+    }
+}
+
+/// Calendar windows do not pretend missing months are zero-spend months.
+public enum ChartPeriod {
+    public static func shifted(_ month: String, by offset: Int) -> String? {
+        let parts = month.split(separator: "-").compactMap { Int($0) }
+        guard parts.count == 2, (1...12).contains(parts[1]) else { return nil }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        guard let date = calendar.date(from: DateComponents(year: parts[0], month: parts[1], day: 1)),
+              let shifted = calendar.date(byAdding: .month, value: offset, to: date) else { return nil }
+        let components = calendar.dateComponents([.year, .month], from: shifted)
+        return String(format: "%04d-%02d", components.year!, components.month!)
+    }
+    public static func window(_ months: [MonthSnapshot], count: Int, end: String? = nil) -> [MonthSnapshot] {
+        guard [3, 6, 12].contains(count), let last = end ?? months.map(\.id).max(),
+              let first = shifted(last, by: 1 - count) else { return [] }
+        return months.filter { $0.id >= first && $0.id <= last }.sorted { $0.id < $1.id }
     }
 }
 
@@ -127,7 +157,67 @@ public struct PreviewLedgerRepository: LedgerRepository {
 
 public extension Decimal {
     var usd: String { formatted(.currency(code: "USD")) }
+    func money(_ currency: String) -> String { formatted(.currency(code: currency)) }
     var chartValue: Double { NSDecimalNumber(decimal: self).doubleValue }
+}
+
+/// Normalized personal shares from the authenticated backend, never total paid or net balances.
+public struct SplitwiseExpense: Decodable, Identifiable, Sendable {
+    public let id: Int
+    public let revision: String
+    public let description: String
+    public let date: String
+    public let currency: String
+    public let my_share: String
+    public let category: SpendCategory?
+    public let reason: String?
+    public let review_required: Bool?
+}
+
+public struct SplitwiseSnapshot: Decodable, Sendable {
+    public let expenses: [SplitwiseExpense]
+    public let last_successful_sync: String?
+    public let auto_enabled: Bool?
+    public let auto_remaining: Int?
+    public let category_warning: String?
+    public let sync_warning: String?
+
+    public func dataset(currency: String) throws -> LedgerDataset {
+        let rows = expenses.filter { $0.currency == currency }
+        var amounts: [String: [SpendCategory: Decimal]] = [:]
+        var pending: [String: Decimal] = [:]
+        var entries: [LedgerEntry] = []
+        for row in rows {
+            let month = String(row.date.prefix(7))
+            guard month.range(of: #"^[0-9]{4}-(0[1-9]|1[0-2])$"#, options: .regularExpression) != nil else {
+                throw SheetError.invalid("Splitwise returned an invalid expense month.")
+            }
+            let share = try SheetParser.money(row.my_share)
+            if amounts[month] == nil {
+                amounts[month] = Dictionary(uniqueKeysWithValues: SpendCategory.allCases.map { ($0, Decimal.zero) })
+            }
+            if let category = row.category { amounts[month]![category, default: 0] += share }
+            else { pending[month, default: 0] += share }
+            entries.append(LedgerEntry(id: String(row.id), description: row.description,
+                                       day: String(row.date.prefix(10)), monthID: month,
+                                       category: row.category, share: share, note: "Your Splitwise share"))
+        }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        let months = amounts.keys.sorted().map { month in
+            let number = Int(month.suffix(2))!
+            return MonthSnapshot(id: month, label: formatter.monthSymbols[number - 1], amounts: amounts[month]!,
+                                 pendingAmount: pending[month, default: 0], currency: currency)
+        }
+        let count = rows.filter { $0.category == nil && $0.review_required != false }.count
+        let matching = rows.filter { $0.category == nil && $0.review_required == false }.count
+        var result = LedgerDataset(months: months, entries: entries, isPreview: false)
+        if count > 0 { result.warnings = ["\(count) expenses need category review. Their shares are included in totals, under Needs review."] }
+        if matching > 0 { result.warnings.append("Matching \(matching) expenses. Their shares are already included in totals.") }
+        if let category_warning { result.warnings.append(category_warning) }
+        if let sync_warning { result.warnings.append(sync_warning) }
+        return result
+    }
 }
 
 public enum SheetError: Error, LocalizedError {
@@ -203,13 +293,14 @@ public enum SheetParser {
                 categoryRows[category] = row
             } else { throw SheetError.invalid("Unrecognized category in summary. Refresh after correcting the sheet.") }
         }
-        guard categoryRows.count == SpendCategory.allCases.count, let totalRow else {
+        guard SpendCategory.allCases.filter({ $0 != .others }).allSatisfy({ categoryRows[$0] != nil }), let totalRow else {
             throw SheetError.invalid("Summary must contain all twelve categories and Total Monthly Expenses.")
         }
         formatter.dateFormat = "yyyy-MM"
         let results = try months.map { index, date in
             var amounts: [SpendCategory: Decimal] = [:]
             for category in SpendCategory.allCases {
+                if category == .others && categoryRows[category] == nil { continue }
                 guard let row = categoryRows[category], index < row.count else { throw SheetError.invalid("Missing category amount.") }
                 amounts[category] = try money(row[index])
             }

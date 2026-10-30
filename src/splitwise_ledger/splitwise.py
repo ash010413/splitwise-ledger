@@ -37,9 +37,19 @@ class SplitwiseClient:
             return dict(await client.fetch_token(TOKEN_URL, code=code))
 
     async def current_user(self, token: dict) -> int:
+        return (await self.current_profile(token))["user_id"]
+
+    async def current_profile(self, token: dict) -> dict:
         async with httpx.AsyncClient(timeout=30) as client:
             data = await self._get(client, "get_current_user", token)
-            return int(data["user"]["id"])
+        user = data["user"]
+        return {
+            "user_id": int(user["id"]),
+            "name": " ".join(
+                str(user.get(k) or "").strip() for k in ("first_name", "last_name")
+            ).strip(),
+            "email": str(user.get("email") or ""),
+        }
 
     @staticmethod
     async def _get(client, endpoint, token, params=None):

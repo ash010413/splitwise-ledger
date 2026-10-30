@@ -8,9 +8,19 @@ project = '''// !$*UTF8*$!
  classes = {};
  objectVersion = 56;
  objects = {
+ A20000000000000000000009 = {isa = PBXBuildFile; fileRef = A2000000000000000000000A;};
+ A2000000000000000000000A = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LedgerApp/CategorySpendingViews.swift; sourceTree = "<group>";};
+ A20000000000000000000007 = {isa = PBXBuildFile; fileRef = A20000000000000000000008;};
+ A20000000000000000000008 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LedgerApp/CategoryReviewSheet.swift; sourceTree = "<group>";};
+ A20000000000000000000005 = {isa = PBXBuildFile; fileRef = A20000000000000000000006;};
+ A20000000000000000000006 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LedgerApp/OnboardingView.swift; sourceTree = "<group>";};
+ A20000000000000000000001 = {isa = PBXBuildFile; fileRef = A20000000000000000000002;};
+ A20000000000000000000003 = {isa = PBXBuildFile; fileRef = A20000000000000000000004;};
+ A20000000000000000000002 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LedgerApp/SplitwiseConnection.swift; sourceTree = "<group>";};
+ A20000000000000000000004 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LedgerApp/ExpenseReviewView.swift; sourceTree = "<group>";};
  A10000000000000000000001 = {isa = PBXProject; attributes = {LastUpgradeCheck = 1640;}; buildConfigurationList = A10000000000000000000002; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base); mainGroup = A10000000000000000000003; productRefGroup = A10000000000000000000004; projectDirPath = ""; projectRoot = ""; targets = (A10000000000000000000005);};
  A10000000000000000000002 = {isa = XCConfigurationList; buildConfigurations = (A10000000000000000000010, A10000000000000000000011); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release;};
- A10000000000000000000003 = {isa = PBXGroup; children = (A10000000000000000000006, A10000000000000000000007, A10000000000000000000004, A1000000000000000000001D, A10000000000000000000019, A1000000000000000000001A); sourceTree = "<group>";};
+ A10000000000000000000003 = {isa = PBXGroup; children = (A2000000000000000000000A,A20000000000000000000008,A20000000000000000000006,A20000000000000000000002,A20000000000000000000004,A10000000000000000000006, A10000000000000000000007, A10000000000000000000004, A1000000000000000000001D, A10000000000000000000019, A1000000000000000000001A); sourceTree = "<group>";};
  A10000000000000000000004 = {isa = PBXGroup; children = (A10000000000000000000008); name = Products; sourceTree = "<group>";};
  A10000000000000000000005 = {isa = PBXNativeTarget; buildConfigurationList = A10000000000000000000009; buildPhases = (A10000000000000000000012, A10000000000000000000013, A10000000000000000000014); buildRules = (); dependencies = (); name = Ledger; productName = Ledger; productReference = A10000000000000000000008; productType = "com.apple.product-type.application";};
  A10000000000000000000006 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LedgerApp/LedgerApp.swift; sourceTree = "<group>";};
@@ -19,7 +29,7 @@ project = '''// !$*UTF8*$!
  A10000000000000000000009 = {isa = XCConfigurationList; buildConfigurations = (A10000000000000000000015, A10000000000000000000016); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release;};
  A10000000000000000000010 = {isa = XCBuildConfiguration; buildSettings = {SDKROOT = iphoneos; IPHONEOS_DEPLOYMENT_TARGET = 17.0; CLANG_ENABLE_MODULES = YES; SWIFT_VERSION = 6.0;}; name = Debug;};
  A10000000000000000000011 = {isa = XCBuildConfiguration; buildSettings = {SDKROOT = iphoneos; IPHONEOS_DEPLOYMENT_TARGET = 17.0; CLANG_ENABLE_MODULES = YES; SWIFT_VERSION = 6.0;}; name = Release;};
- A10000000000000000000012 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000017, A10000000000000000000018); runOnlyForDeploymentPostprocessing = 0;};
+ A10000000000000000000012 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A20000000000000000000001,A20000000000000000000009,A20000000000000000000007,A20000000000000000000005,A20000000000000000000003,A10000000000000000000017, A10000000000000000000018); runOnlyForDeploymentPostprocessing = 0;};
  A10000000000000000000013 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0;};
  A10000000000000000000014 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (A1000000000000000000001B,A1000000000000000000001C); runOnlyForDeploymentPostprocessing = 0;};
  A10000000000000000000015 = {isa = XCBuildConfiguration; baseConfigurationReference = A1000000000000000000001D; buildSettings = {GENERATE_INFOPLIST_FILE = YES; ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; INFOPLIST_KEY_CFBundleDisplayName = Minto; INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreen; INFOPLIST_FILE = LedgerApp/Info.plist; INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;  INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"; PRODUCT_BUNDLE_IDENTIFIER = com.ashwin.splitwiseledger; PRODUCT_NAME = "$(TARGET_NAME)"; TARGETED_DEVICE_FAMILY = "1,2"; SWIFT_VERSION = 6.0; MARKETING_VERSION = 0.1; CURRENT_PROJECT_VERSION = 1; CODE_SIGN_STYLE = Automatic; SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)"; SWIFT_OPTIMIZATION_LEVEL = "-Onone"; DEBUG_INFORMATION_FORMAT = dwarf;}; name = Debug;};

@@ -13,6 +13,14 @@ class AnalysisMonth(BaseModel):
     month: str = Field(pattern=r"^(all|[0-9]{4}-(0[1-9]|1[0-2]))$")
     amounts: dict[Category, str]
     covered_months: list[str] = Field(default_factory=list, max_length=120)
+    pending_amount: str = Field(default="0", max_length=30)
+
+    @field_validator("pending_amount")
+    @classmethod
+    def validate_pending(cls, value):
+        if abs(Decimal(amount(value))) > Decimal("1000000000"):
+            raise ValueError("Pending amount out of range")
+        return value
 
     @model_validator(mode="after")
     def validate_period(self):
@@ -29,26 +37,38 @@ class AnalysisMonth(BaseModel):
     @field_validator("amounts")
     @classmethod
     def validate_amounts(cls, values):
+        # Older app builds and the original sheet have only the twelve named categories.
+        values = {Category.OTHERS: "0", **values}
         if set(values) != set(Category):
-            raise ValueError("All twelve categories are required")
+            raise ValueError("All spending categories are required")
         for value in values.values():
             if len(value) > 30 or abs(Decimal(amount(value))) > Decimal("1000000000"):
                 raise ValueError("Amount out of range")
         return values
 
 
+class AnalysisMessage(BaseModel):
+    role: str = Field(pattern="^(user|model)$")
+    text: str = Field(min_length=1, max_length=4000)
+
+
 class AnalysisRequest(BaseModel):
     current: AnalysisMonth
     previous: AnalysisMonth | None = None
-    currency: str = Field(default="USD", pattern="^USD$")
+    currency: str = Field(default="USD", pattern="^[A-Z]{3}$")
+    conversation: list[AnalysisMessage] = Field(default_factory=list, max_length=20)
 
     def facts(self):
         def project(month):
             result = {
                 "month": month.month,
                 "category_amounts": month.amounts,
-                "total": str(sum((Decimal(v) for v in month.amounts.values()), Decimal(0))),
+                "total": str(
+                    sum((Decimal(v) for v in month.amounts.values()), Decimal(month.pending_amount))
+                ),
             }
+            if Decimal(month.pending_amount):
+                result["needs_review"] = month.pending_amount
             if month.covered_months:
                 result["covered_months"] = sorted(month.covered_months)
             return result
@@ -72,8 +92,15 @@ async def summarize(request: AnalysisRequest, key: str, model: str) -> str:
                     "parts": [
                         {
                             "text": (
-                                "Summarize only the supplied expense totals in under 180 words. "
-                                "Give an overview, three observations and one optional question. "
+                                "Discuss only the supplied expense totals in under 180 words. "
+                                "For the first response give an overview and three observations. "
+                                "Answer follow-up questions directly using the supplied totals. "
+                                "Use short paragraphs, Markdown bold and bullets for readability. "
+                                "If the data cannot answer a question, explain what is missing. "
+                                "needs_review is uncategorized spending included in the total; "
+                                "Others contains historical purchases whose purpose remained "
+                                "unclear after matching; do not infer what they were for. "
+                                "do not assign it to any category or judge a partial breakdown. "
                                 "Do not invent transactions, income, budgets or causes. "
                                 "Do not give financial advice or full-year trends. "
                                 "Months may be incomplete and are calendar-month snapshots, "
@@ -85,7 +112,13 @@ async def summarize(request: AnalysisRequest, key: str, model: str) -> str:
                         }
                     ]
                 },
-                "contents": [{"role": "user", "parts": [{"text": json.dumps(request.facts())}]}],
+                "contents": [
+                    {"role": "user", "parts": [{"text": json.dumps(request.facts())}]},
+                    *[
+                        {"role": message.role, "parts": [{"text": message.text}]}
+                        for message in request.conversation
+                    ],
+                ],
                 "generationConfig": generation,
             },
         )

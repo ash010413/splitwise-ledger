@@ -3,7 +3,8 @@ import Foundation
 @testable import LedgerCore
 
 private func fixture() -> String {
-    let rows = SpendCategory.allCases.map { "\($0.rawValue),\"$10.25\",\"$20.00\"" }
+    // The original twelve-category sheet remains compatible with the new app.
+    let rows = SpendCategory.allCases.filter { $0 != .others }.map { "\($0.rawValue),\"$10.25\",\"$20.00\"" }
     return (["Category,Oct 2026,Nov 2026"] + rows + ["Total Monthly Expenses,$123.00,$240.00"]).joined(separator: "\n")
 }
 

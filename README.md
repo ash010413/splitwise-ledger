@@ -1,3 +1,8 @@
+> **Current integration:** Minto now includes a per-user Splitwise OAuth beta,
+> personal-share syncing, category review and separate currency views. See
+> [Splitwise beta setup and architecture](docs/splitwise-beta.md). The older
+> single-account CLI and Google Sheets prototype are retained below for reference.
+
 # Minto
 
 Make room for clarity. A personal spending app with live Google Sheets totals and

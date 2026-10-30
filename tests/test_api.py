@@ -106,7 +106,19 @@ def test_analysis_cache_uses_facts_not_dictionary_order(tmp_path, monkeypatch):
             )
             assert response.status_code == 200
             assert response.json()["summary"] == "A factual summary."
-    assert calls == ["2026-10"]
+        follow_up = client.post(
+            "/analysis",
+            headers=AUTH,
+            json={
+                "current": {"month": "2026-10", "amounts": amounts},
+                "conversation": [
+                    {"role": "model", "text": "A factual summary."},
+                    {"role": "user", "text": "What drives the total?"},
+                ],
+            },
+        )
+        assert follow_up.status_code == 200
+    assert calls == ["2026-10", "2026-10"]
 
 
 def test_oauth_state_cookie_required_and_state_is_one_use(client):

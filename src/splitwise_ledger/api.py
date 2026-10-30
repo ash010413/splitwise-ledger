@@ -3,8 +3,10 @@
 import asyncio
 import hashlib
 import json
+import logging
 import secrets
 import time
+from contextlib import asynccontextmanager
 from decimal import Decimal
 
 import httpx
@@ -19,6 +21,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from .analysis import AnalysisRequest, summarize
 from .domain import Category
+from .mobile import MobileAccounts, mobile_router
 from .splitwise import SplitwiseClient
 from .store import ConflictError, Store
 
@@ -34,6 +37,8 @@ class Settings(BaseSettings):
     google_sheet_id: str = ""
     google_summary_tab: str = ""
     gemini_api_key: str = ""
+    gemini_auto_categorize: bool = True
+    daily_sync_enabled: bool = True
     gemini_model: str = Field(default="gemini-3.5-flash-lite", pattern=r"^[a-zA-Z0-9.-]+$")
 
 
@@ -71,11 +76,41 @@ def create_app(settings: Settings | None = None, provider=None) -> FastAPI:
         settings.splitwise_client_secret,
         settings.splitwise_redirect_uri,
     )
-    app = FastAPI(title="Splitwise Ledger", version="0.1.0")
+
+    async def daily_loop():
+        while True:
+            try:
+                await run_daily_sync()
+            except Exception as exc:
+                logging.getLogger(__name__).warning(
+                    "Daily sync check failed (%s)", type(exc).__name__
+                )
+            # This checks local timestamps, not Splitwise, until an account is due.
+            await asyncio.sleep(900)
+
+    @asynccontextmanager
+    async def lifespan(app):
+        task = asyncio.create_task(daily_loop()) if settings.daily_sync_enabled else None
+        try:
+            yield
+        finally:
+            if task:
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+
+    app = FastAPI(title="Minto", version="0.5.0", lifespan=lifespan)
     lock = asyncio.Lock()
     analysis_lock = asyncio.Lock()
     analysis_cache = {}
     bearer = HTTPBearer(auto_error=False)
+
+    @app.middleware("http")
+    async def private_mobile_responses(request: Request, call_next):
+        response = await call_next(request)
+        if request.url.path.startswith("/mobile/"):
+            response.headers["Cache-Control"] = "no-store"
+            response.headers["Referrer-Policy"] = "no-referrer"
+        return response
 
     def authenticated(
         credentials: HTTPAuthorizationCredentials | None = Depends(bearer),  # noqa: B008
@@ -89,12 +124,19 @@ def create_app(settings: Settings | None = None, provider=None) -> FastAPI:
     def health():
         return {"status": "ok"}
 
-    @app.post("/analysis", dependencies=[Depends(authenticated)])
-    async def analyze(body: AnalysisRequest):
+    async def analyze(body: AnalysisRequest, cache_scope="legacy"):
         if not settings.gemini_api_key:
             raise HTTPException(503, "Add GEMINI_API_KEY to the backend .env and restart it.")
         fingerprint = hashlib.sha256(
-            json.dumps(body.facts(), sort_keys=True, separators=(",", ":")).encode()
+            json.dumps(
+                {
+                    "account": cache_scope,
+                    "facts": body.facts(),
+                    "conversation": [m.model_dump() for m in body.conversation],
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
         ).hexdigest()
         cached = analysis_cache.get(fingerprint)
         if cached and time.time() - cached["created"] < 300:
@@ -127,6 +169,17 @@ def create_app(settings: Settings | None = None, provider=None) -> FastAPI:
             analysis_cache[fingerprint] = {"created": time.time(), "response": response}
             return response
 
+    @app.post("/analysis", dependencies=[Depends(authenticated)])
+    async def legacy_analysis(body: AnalysisRequest):
+        return await analyze(body)
+
+    accounts = MobileAccounts(store, cipher)
+    router, mobile_callback, run_daily_sync = mobile_router(
+        settings, provider, accounts, analyze, Review, oauth_failure
+    )
+    app.include_router(router)
+    app.state.run_daily_sync = run_daily_sync
+
     @app.get("/categories", dependencies=[Depends(authenticated)])
     def categories():
         return list(Category)
@@ -142,6 +195,8 @@ def create_app(settings: Settings | None = None, provider=None) -> FastAPI:
 
     @app.get("/oauth/splitwise/callback", response_class=HTMLResponse)
     async def callback(request: Request, state: str = "", code: str = ""):
+        if state.startswith("minto_"):
+            return await mobile_callback(request, state, code)
         # A browser-bound, one-use state prevents login CSRF / token substitution.
         with store.transaction() as db:
             row = db.execute("SELECT value FROM settings WHERE key='oauth_state'").fetchone()

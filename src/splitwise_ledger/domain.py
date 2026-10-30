@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import re
 from decimal import Decimal, InvalidOperation
 from enum import StrEnum
 
@@ -19,6 +20,7 @@ class Category(StrEnum):
     SPORTS = "Badminton / Sports"
     GYM = "Gym"
     LUX = "Lux"
+    OTHERS = "Others"
 
 
 def normalize_description(value: str) -> str:
@@ -37,8 +39,22 @@ def amount(value: str) -> str:
 
 def normalize_expense(raw: dict, user_id: int) -> dict:
     """Use consumption (owed_share), never payment or net balance. Fail closed on missing data."""
-    excluded = bool(raw.get("deleted_at") or raw.get("payment"))
-    shares = [u for u in raw.get("users", []) if u.get("user_id") == user_id]
+    excluded = bool(
+        raw.get("deleted_at")
+        or raw.get("payment")
+        or raw.get("creation_method") == "debt_consolidation"
+    )
+    users = raw.get("users", [])
+    shares = [u for u in users if u.get("user_id") == user_id]
+    if not excluded and not shares:
+        # Group history includes expenses involving only other members. Persist an
+        # excluded record so an edit removing our share also removes old spending.
+        # An absent/malformed participant list is still an import error.
+        if not users or any(
+            not isinstance(u.get("user_id"), int) or "owed_share" not in u for u in users
+        ):
+            raise ValueError("Expense has an invalid participant list")
+        excluded = True
     if not excluded and len(shares) != 1:
         raise ValueError("Expense must contain exactly one share for the connected user")
     share = amount(shares[0]["owed_share"]) if shares and not excluded else "0"
@@ -61,6 +77,53 @@ def normalize_expense(raw: dict, user_id: int) -> dict:
     return record
 
 
+# Deliberately omit broad categories such as Insurance, Electronics and General:
+# these cannot distinguish the user's Home/Car or necessary/discretionary spending.
+SOURCE_CATEGORIES = {
+    "rent": Category.HOME,
+    "electricity": Category.HOME,
+    "water": Category.HOME,
+    "heat/gas": Category.HOME,
+    "trash": Category.HOME,
+    "car": Category.CAR,
+    "gas/fuel": Category.CAR,
+    "parking": Category.CAR,
+    "plane": Category.TRAVEL,
+    "hotel": Category.TRAVEL,
+    "dining out": Category.DINING,
+    "groceries": Category.GROCERIES,
+    "movies": Category.ENTERTAINMENT,
+    "entertainment - other": Category.ENTERTAINMENT,
+    "sports": Category.SPORTS,
+}
+
+# Whole words/phrases only. Costco, Amazon, Walmart and generic "subscription"
+# remain ambiguous; they sell goods spanning several of this user's categories.
+DESCRIPTION_PATTERNS = {
+    Category.HOME: (
+        r"\b(rent|renters? insurance|electricity|electric bill|water bill|utilities|"
+        r"utility bill|home internet|internet bill|wifi bill)\b"
+    ),
+    Category.CAR: r"\b(fuel|petrol|gas station|car wash|car insurance|auto insurance|parking)\b",
+    Category.TRAVEL: (
+        r"\b(flight|flights|airfare|airline|hotel|airbnb|car rental|"
+        r"rental car|car rent|rent a car)\b"
+    ),
+    Category.DINING: r"\b(breakfast|lunch|dinner|restaurant|dining out|takeout)\b",
+    Category.GROCERIES: r"\b(grocery|groceries)\b",
+    Category.ENTERTAINMENT: r"\b(movie|movies|cinema|concert tickets?)\b",
+    Category.PHONE: r"\b(phone bill|mobile bill|icloud)\b",
+    Category.AI: (
+        r"\b(chatgpt|openai subscription|claude pro|claude subscription|gemini advanced|"
+        r"gemini subscription|perplexity pro|cursor pro)\b"
+    ),
+    Category.SPORTS: (
+        r"\b(badminton|pickleball|tennis court|sports court|running shoes|sports shoes)\b"
+    ),
+    Category.GYM: r"\b(gym membership|gym subscription|gym fees?)\b",
+}
+
+
 def classify(record: dict, rules: list[dict]) -> tuple[str | None, str]:
     if record["excluded"]:
         return None, "excluded"
@@ -74,4 +137,25 @@ def classify(record: dict, rules: list[dict]) -> tuple[str | None, str]:
     categories = {rule["category"] for rule in matches}
     if len(categories) == 1:
         return categories.pop(), "approved_rule"
-    return None, "conflicting_rules" if matches else "needs_review"
+    if matches:
+        return None, "conflicting_rules"
+    description = normalize_description(record["description"])
+    signals = {
+        category
+        for category, pattern in DESCRIPTION_PATTERNS.items()
+        if re.search(pattern, description)
+    }
+    source = SOURCE_CATEGORIES.get(
+        (record.get("source_category") or {}).get("name", "").casefold().strip()
+    )
+    if source:
+        signals.add(source)
+    # These phrases explicitly suggest a different purpose than a bare keyword.
+    # Never guess Misc/Lux, or auto-file a mixed purchase in just one category.
+    if re.search(r"\b(gift|gifts|reimbursement|refund|mixed|stock|stocks)\b", description):
+        return None, "needs_review"
+    if len(signals) > 1:
+        return None, "conflicting_signals"
+    if len(signals) == 1:
+        return signals.pop().value, "splitwise_category" if source else "description_rule"
+    return None, "needs_review"
