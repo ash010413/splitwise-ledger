@@ -1,6 +1,6 @@
 # Minto
 
-**Your spending, in focus.** A native iPhone app that turns your personal share of Splitwise expenses into clear monthly trends, category breakdowns, and conversational insights.
+**Your spending, in focus.** A native iOS app that turns your personal share of Splitwise expenses into clear monthly trends, category breakdowns, and conversational insights.
 
 Minto is running as a small hosted beta. Splitwise is the source of expenses; Google Sheets is no longer part of the active data flow. TestFlight distribution is being prepared.
 
