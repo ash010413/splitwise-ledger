@@ -10,9 +10,18 @@ from splitwise_ledger.domain import Category, normalize_expense
 from splitwise_ledger.store import Store
 
 
-@pytest.fixture
-def store(tmp_path):
-    store = Store(str(tmp_path / "categories.db"))
+@pytest.fixture(params=["sqlite", "firestore"])
+def store(tmp_path, request, monkeypatch):
+    if request.param == "firestore":
+        from firestore_fake import Client
+        from google.cloud import firestore
+
+        from splitwise_ledger.firestore_ledger import FirestoreLedger
+
+        monkeypatch.setattr(firestore, "transactional", lambda fn: lambda tx: tx.run(fn))
+        store = FirestoreLedger(Client(), 7)
+    else:
+        store = Store(str(tmp_path / "categories.db"))
     rows = [
         normalize_expense(
             {

@@ -1,0 +1,4 @@
+// Public HTTPS endpoint for distributed builds. No credentials belong here.
+MINTO_BACKEND_URL = https:/$()/minto-997824541815.us-central1.run.app
+MINTO_SHEET_ID =
+MINTO_SUMMARY_TAB =

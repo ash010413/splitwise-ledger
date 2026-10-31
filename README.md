@@ -1,3 +1,7 @@
+> **Hosted beta:** Cloud Run + Firestore deployment and iPhone release settings are
+> documented in [the GCP deployment guide](deploy/gcp/README.md).
+> The backend can run independently of the developer’s Mac.
+
 > **Current integration:** Minto now includes a per-user Splitwise OAuth beta,
 > personal-share syncing, category review and separate currency views. See
 > [Splitwise beta setup and architecture](docs/splitwise-beta.md). The older

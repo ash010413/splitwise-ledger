@@ -1,5 +1,9 @@
 # Minto: small-group Splitwise beta
 
+The hosted Cloud Run/Firestore beta is now configured. See the
+[GCP deployment guide](../deploy/gcp/README.md) for the current endpoint and release
+configuration. The local Mac setup below remains available for development.
+
 Keep the existing app and repository. The chart, category-history and AI views are
 shared; the authenticated Splitwise adapter replaces Sheets for connected users.
 Sheets code remains available for the older prototype, and no Sheets data is copied

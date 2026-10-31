@@ -57,6 +57,11 @@ class Store:
             row = db.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
             return json.loads(row[0]) if row else None
 
+    def set_many(self, values):
+        with self.transaction() as db:
+            for key, value in values.items():
+                self.put(db, key, value)
+
     @staticmethod
     def put(db, key, value):
         db.execute("INSERT OR REPLACE INTO settings VALUES (?, ?)", (key, json.dumps(value)))

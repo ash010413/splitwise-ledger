@@ -1,3 +1,11 @@
+## Hosted backend
+
+Release builds now use `Production.xcconfig` and the hosted HTTPS backend. Debug
+builds inherit that endpoint, with optional local overrides. Rebuild and sign in
+once when moving from the Mac server; no shared network or on-device API key is
+needed. See [the GCP guide](../deploy/gcp/README.md). TestFlight upload remains a
+separate step.
+
 ## Splitwise OAuth beta
 
 New builds open on **Continue with Splitwise**. Use the existing Minto app and

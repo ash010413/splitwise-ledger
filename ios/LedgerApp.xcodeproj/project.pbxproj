@@ -19,6 +19,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+        A30000000000000000000001 = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Production.xcconfig; sourceTree = "<group>";};
         A2000000000000000000000A = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LedgerApp/CategorySpendingViews.swift; sourceTree = "<group>";};
         A20000000000000000000008 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LedgerApp/CategoryReviewSheet.swift; sourceTree = "<group>";};
         A20000000000000000000006 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LedgerApp/OnboardingView.swift; sourceTree = "<group>";};
@@ -52,6 +53,7 @@
                 A20000000000000000000002,
                 A20000000000000000000004,
                 A1000000000000000000001D,
+                A30000000000000000000001,
                 A10000000000000000000019,
                 A1000000000000000000001A,
 				A10000000000000000000006 /* LedgerApp/LedgerApp.swift */,
@@ -188,6 +190,7 @@
 		};
 		A10000000000000000000016 /* Release */ = {
 			isa = XCBuildConfiguration;
+            baseConfigurationReference = A30000000000000000000001;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;

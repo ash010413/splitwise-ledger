@@ -1,0 +1,11 @@
+*
+!Dockerfile
+!pyproject.toml
+!requirements-cloud.lock
+!src/
+!src/**
+!deploy/
+!deploy/gcp/
+!deploy/gcp/cloudbuild.yaml
+**/__pycache__/
+**/*.pyc

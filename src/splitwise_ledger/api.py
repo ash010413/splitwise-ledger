@@ -8,6 +8,7 @@ import secrets
 import time
 from contextlib import asynccontextmanager
 from decimal import Decimal
+from typing import Literal
 
 import httpx
 from authlib.integrations.base_client.errors import OAuthError
@@ -18,6 +19,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from starlette.middleware.gzip import GZipMiddleware
 
 from .analysis import AnalysisRequest, summarize
 from .domain import Category
@@ -34,6 +36,11 @@ class Settings(BaseSettings):
     app_api_token: str = Field(min_length=32)
     token_encryption_key: str
     database_path: str = "data/ledger.sqlite3"
+    storage_backend: Literal["sqlite", "firestore"] = "sqlite"
+    firestore_project: str = ""
+    scheduler_audience: str = ""
+    scheduler_service_account: str = ""
+    max_accounts: int = Field(default=4, ge=1, le=10)
     google_sheet_id: str = ""
     google_summary_tab: str = ""
     gemini_api_key: str = ""
@@ -69,7 +76,12 @@ def oauth_failure(stage: str, error: Exception) -> str:
 
 def create_app(settings: Settings | None = None, provider=None) -> FastAPI:
     settings = settings or Settings()
-    store = Store(settings.database_path)
+    import os
+
+    cloud = settings.storage_backend == "firestore"
+    if os.environ.get("K_SERVICE") and (not cloud or settings.daily_sync_enabled):
+        raise ValueError("Cloud Run requires Firestore and DAILY_SYNC_ENABLED=false")
+    store = None if cloud else Store(settings.database_path)
     cipher = Fernet(settings.token_encryption_key.encode())
     provider = provider or SplitwiseClient(
         settings.splitwise_client_id,
@@ -99,6 +111,7 @@ def create_app(settings: Settings | None = None, provider=None) -> FastAPI:
                 await asyncio.gather(task, return_exceptions=True)
 
     app = FastAPI(title="Minto", version="0.5.0", lifespan=lifespan)
+    app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=6)
     lock = asyncio.Lock()
     analysis_lock = asyncio.Lock()
     analysis_cache = {}
@@ -173,12 +186,61 @@ def create_app(settings: Settings | None = None, provider=None) -> FastAPI:
     async def legacy_analysis(body: AnalysisRequest):
         return await analyze(body)
 
-    accounts = MobileAccounts(store, cipher)
+    if cloud:
+        from google.cloud import firestore
+
+        from .firestore_accounts import FirestoreAccounts
+
+        accounts = FirestoreAccounts(
+            firestore.Client(project=settings.firestore_project or None),
+            cipher,
+            settings.max_accounts,
+        )
+    else:
+        accounts = MobileAccounts(store, cipher)
     router, mobile_callback, run_daily_sync = mobile_router(
         settings, provider, accounts, analyze, Review, oauth_failure
     )
     app.include_router(router)
     app.state.run_daily_sync = run_daily_sync
+    app.state.accounts = accounts
+
+    @app.post("/internal/sync")
+    async def scheduled_sync(request: Request):
+        if not cloud or not settings.scheduler_audience or not settings.scheduler_service_account:
+            raise HTTPException(404, "Not found")
+        from google.auth.transport.requests import Request as GoogleRequest
+        from google.oauth2 import id_token
+
+        header = request.headers.get("authorization", "")
+        if not header.startswith("Bearer "):
+            raise HTTPException(401, "Scheduler authentication required")
+        try:
+            claims = await asyncio.to_thread(
+                id_token.verify_oauth2_token,
+                header[7:],
+                GoogleRequest(),
+                settings.scheduler_audience,
+            )
+        except Exception:
+            raise HTTPException(401, "Invalid scheduler identity") from None
+        if (
+            claims.get("email") != settings.scheduler_service_account
+            or claims.get("email_verified") is not True
+        ):
+            raise HTTPException(403, "Scheduler identity not allowed")
+        await run_daily_sync(max_batches_per_account=2, time_budget=240)
+        return {"status": "complete"}
+
+    if cloud:
+
+        @app.get("/oauth/splitwise/callback", response_class=HTMLResponse)
+        async def cloud_callback(request: Request, state: str = "", code: str = ""):
+            if not state.startswith("minto_"):
+                raise HTTPException(400, "Start sign-in from Minto")
+            return await mobile_callback(request, state, code)
+
+        return app
 
     @app.get("/categories", dependencies=[Depends(authenticated)])
     def categories():
