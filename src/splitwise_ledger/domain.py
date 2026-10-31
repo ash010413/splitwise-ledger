@@ -114,7 +114,7 @@ DESCRIPTION_PATTERNS = {
     ),
     Category.DINING: r"\b(breakfast|lunch|dinner|restaurant|dining out|takeout)\b",
     Category.GROCERIES: r"\b(grocery|groceries)\b",
-    Category.ENTERTAINMENT: r"\b(movie|movies|cinema|concert tickets?)\b",
+    Category.ENTERTAINMENT: r"\b(movie|movies|cinema|concert tickets?|spotify)\b",
     Category.PHONE: r"\b(phone bill|mobile bill|icloud)\b",
     Category.AI: (
         r"\b(chatgpt|openai subscription|claude pro|claude subscription|gemini advanced|"
@@ -127,7 +127,7 @@ DESCRIPTION_PATTERNS = {
 }
 
 
-def classify(record: dict, rules: list[dict]) -> tuple[str | None, str]:
+def classify(record: dict, rules: list[dict], group_title: str = "") -> tuple[str | None, str]:
     if record["excluded"]:
         return None, "excluded"
     matches = [
@@ -153,6 +153,17 @@ def classify(record: dict, rules: list[dict]) -> tuple[str | None, str]:
     )
     if source:
         signals.add(source)
+    group_match = bool(
+        re.fullmatch(
+            r"(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|"
+            r"aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)"
+            r"[ .-]*20\d{2}",
+            description,
+        )
+        and re.search(r"\bspotify\b", group_title.casefold())
+    )
+    if group_match:
+        signals.add(Category.ENTERTAINMENT)
     # The owner's taxonomy explicitly treats ordinary Costco shopping as groceries.
     # Specific evidence (fuel, source category, non-food items) wins over this default.
     if (
@@ -172,5 +183,7 @@ def classify(record: dict, rules: list[dict]) -> tuple[str | None, str]:
     if len(signals) > 1:
         return None, "conflicting_signals"
     if len(signals) == 1:
-        return signals.pop().value, "splitwise_category" if source else "description_rule"
+        return signals.pop().value, (
+            "splitwise_category" if source else "group_rule" if group_match else "description_rule"
+        )
     return None, "needs_review"

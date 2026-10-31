@@ -72,7 +72,7 @@ def test_matching_uses_minimal_context_and_does_not_repeat_uncertain_items(store
         assert req.headers["x-goog-api-key"] == "test-secret"
         body = json.loads(req.content)
         items = json.loads(body["contents"][0]["parts"][0]["text"])
-        assert set(items[0]) == {"item", "description", "source_category"}
+        assert set(items[0]) == {"item", "description", "source_category", "group_title"}
         instruction = body["systemInstruction"]["parts"][0]["text"]
         assert "Misc" in instruction
         assert "bare Costco description" in instruction
@@ -283,3 +283,63 @@ def test_rule_upgrade_repairs_old_others_without_ai_and_preserves_human(store):
     }
     assert store.reclassify(POLICY_VERSION) == 0
     assert store.ai_pending(POLICY_VERSION) == []
+
+
+def test_group_titles_reach_gemini_and_context_changes_retry_uncertainty(store, monkeypatch):
+    from splitwise_ledger.categorization import classification_policy
+
+    store.begin_history()
+    old_policy = classification_policy(store)
+    groups = store.ai_pending(old_policy)
+    store.apply_ai_decisions(
+        groups,
+        [Decision(item=i, category=None, certain=False, reason="Vague") for i in range(2)],
+        old_policy,
+        "test",
+    )
+    store.finish_history(old_policy)
+    before = {r["id"]: (r["revision"], r["my_share"]) for r in store.expenses()}
+    store.set_many({"splitwise_groups": {"2": "Shared subscription plan"}})
+    new_policy = classification_policy(store)
+    assert old_policy != new_policy
+
+    def inspect(request):
+        body = json.loads(request.content)
+        items = json.loads(body["contents"][0]["parts"][0]["text"])
+        assert all(r["group_title"] == "Shared subscription plan" for r in items)
+        assert all("group_id" not in r and "members" not in r for r in items)
+        assert "Spotify Family" in body["systemInstruction"]["parts"][0]["text"]
+
+    mock_model(
+        monkeypatch,
+        {
+            "decisions": [
+                {
+                    "item": i,
+                    "category": "Movie / Entertainment",
+                    "certain": True,
+                    "reason": "Subscription",
+                }
+                for i in range(2)
+            ]
+        },
+        inspect,
+    )
+    result = asyncio.run(categorize_pending(store, "test", "test"))
+    assert result["matched"] == 2
+    assert not store.ai_pending(new_policy)
+    assert {r["id"]: (r["revision"], r["my_share"]) for r in store.expenses()} == before
+    assert classification_policy(store) == new_policy
+
+
+def test_month_only_spotify_group_rule_preserves_manual_choices(store):
+    row = store.expenses()[0]
+    store.save_batch([dict(row, description="Jan 2026", revision="month-entry")], "later")
+    store.set_many({"splitwise_groups": {"2": "Spotify Family"}})
+    store.reclassify()
+    actual = next(r for r in store.expenses() if r["id"] == row["id"])
+    assert actual["category"] == Category.ENTERTAINMENT
+    assert actual["reason"] == "group_rule"
+    store.review(actual["id"], actual["revision"], Category.LUX, False)
+    store.reclassify(POLICY_VERSION)
+    assert next(r for r in store.expenses() if r["id"] == row["id"])["category"] == Category.LUX

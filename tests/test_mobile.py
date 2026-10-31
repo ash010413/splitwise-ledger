@@ -398,3 +398,44 @@ def test_daily_worker_sends_entire_historical_backlog_to_gemini_before_fallback(
     row = client.get("/mobile/expenses", headers=headers).json()["expenses"][0]
     assert row["category"] is None
     assert row["review_required"] is True
+
+
+def test_group_context_refresh_is_account_scoped_and_not_an_expense_revision(setup):
+    client, provider, settings = setup
+    calls = []
+
+    async def groups(token):
+        user = await provider.current_user(token)
+        calls.append(user)
+        return {"9": "Spotify Family" if user == 7 else "Friends"}
+
+    provider.groups = groups
+    a, b = login(client, 7), login(client, 8)
+    client.post("/mobile/sync", headers=a)
+    original = client.get("/mobile/expenses", headers=a).json()["expenses"][0]
+    assert client.post("/mobile/sync", headers=a).json()["skipped"] is True
+    assert calls == [7]
+    client.post("/mobile/sync", headers=b)
+    assert calls == [7, 8]
+    root = str(Path(settings.database_path).with_suffix("")) + "-accounts/"
+    assert Store(root + "7.sqlite3").get("splitwise_groups") == {"9": "Spotify Family"}
+    assert Store(root + "8.sqlite3").get("splitwise_groups") == {"9": "Friends"}
+    client.post("/mobile/sync?force=true", headers=a)
+    assert calls == [7, 8, 7]
+    actual = client.get("/mobile/expenses", headers=a).json()["expenses"][0]
+    assert actual["revision"] == original["revision"]
+    assert actual["my_share"] == original["my_share"]
+
+
+def test_group_lookup_failure_preserves_expenses_and_can_retry(setup):
+    client, provider, settings = setup
+
+    async def fail(token):
+        raise httpx.ReadTimeout("timeout")
+
+    provider.groups = fail
+    headers = login(client)
+    assert client.post("/mobile/sync?force=true", headers=headers).status_code == 200
+    actual = client.get("/mobile/expenses", headers=headers).json()
+    assert len(actual["expenses"]) == 1
+    assert actual["sync_warning"]

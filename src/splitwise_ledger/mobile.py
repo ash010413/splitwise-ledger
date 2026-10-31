@@ -20,7 +20,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
-from .categorization import POLICY_VERSION, categorize_pending
+from .categorization import categorize_pending, classification_policy
 from .store import ConflictError, Store
 
 
@@ -154,7 +154,7 @@ def mobile_router(settings, provider, accounts, analysis, review_type, oauth_fai
             result = await categorize_pending(
                 ledger, settings.gemini_api_key, settings.gemini_model
             )
-            ledger.finish_history(POLICY_VERSION)
+            ledger.finish_history(classification_policy(ledger))
         except (httpx.HTTPError, ValueError, KeyError):
             warning = "Gemini category matching is temporarily unavailable. Expenses are synced."
             ledger.set_many(
@@ -249,6 +249,35 @@ def mobile_router(settings, provider, accounts, analysis, review_type, oauth_fai
             "profile": ledger.get("profile"),
         }
 
+    async def refresh_groups(ledger, user_id, force=False):
+        if not hasattr(provider, "groups"):
+            return
+        if not force and time.time() - (ledger.get("groups_fetched_at") or 0) < 86400:
+            return
+        if time.time() < (ledger.get("groups_retry_after") or 0):
+            return
+        token = accounts.token(user_id)
+        if not token:
+            return
+        try:
+            titles = await provider.groups(token)
+            ledger.set_many(
+                {
+                    "splitwise_groups": titles,
+                    "groups_fetched_at": time.time(),
+                    "groups_retry_after": 0,
+                    "group_context_warning": None,
+                }
+            )
+        except (httpx.HTTPError, ValueError, KeyError):
+            ledger.set_many(
+                {
+                    "groups_retry_after": time.time() + 300,
+                    "group_context_warning": "Group context could not refresh. "
+                    "Existing expenses are retained; pull to refresh to retry.",
+                }
+            )
+
     @router.post("/sync")
     async def sync(force: bool = False, user_id=require_user):
         lock = locks.setdefault(user_id, asyncio.Lock())
@@ -257,7 +286,8 @@ def mobile_router(settings, provider, accounts, analysis, review_type, oauth_fai
         async with lock, accounts.operation(user_id):
             ledger = accounts.ledger(user_id)
             ledger.begin_history()
-            ledger.reclassify(POLICY_VERSION)
+            await refresh_groups(ledger, user_id, force)
+            ledger.reclassify(classification_policy(ledger))
             last = ledger.get("last_successful_sync_at")
             if last is None and ledger.get("sync_cursor"):
                 try:
@@ -316,7 +346,7 @@ def mobile_router(settings, provider, accounts, analysis, review_type, oauth_fai
                     # Finish the whole backlog even when the native app is closed.
                     # Each batch remains bounded and revision-safe, and errors back off.
                     batches = 0
-                    while ledger.ai_pending(POLICY_VERSION):
+                    while ledger.ai_pending(classification_policy(ledger)):
                         if (
                             max_batches_per_account is not None
                             and batches >= max_batches_per_account
@@ -360,12 +390,12 @@ def mobile_router(settings, provider, accounts, analysis, review_type, oauth_fai
     def expenses(user_id=require_user):
         ledger = accounts.ledger(user_id)
         ledger.begin_history()
-        ledger.reclassify(POLICY_VERSION)
-        ledger.finish_history(POLICY_VERSION)
+        ledger.reclassify(classification_policy(ledger))
+        ledger.finish_history(classification_policy(ledger))
         historical = ledger.historical_ids()
         auto_enabled = bool(settings.gemini_api_key and settings.gemini_auto_categorize)
         waiting_for_ai = (
-            {r["id"] for group in ledger.ai_pending(POLICY_VERSION) for r in group}
+            {r["id"] for group in ledger.ai_pending(classification_policy(ledger)) for r in group}
             if auto_enabled
             else set()
         )
@@ -383,7 +413,7 @@ def mobile_router(settings, provider, accounts, analysis, review_type, oauth_fai
             "auto_enabled": auto_enabled,
             "auto_remaining": len(waiting_for_ai),
             "category_warning": ledger.get("category_warning"),
-            "sync_warning": ledger.get("sync_warning"),
+            "sync_warning": ledger.get("sync_warning") or ledger.get("group_context_warning"),
         }
 
     @router.post("/expenses/{expense_id}/review")

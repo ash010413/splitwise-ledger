@@ -34,7 +34,7 @@ An incremental cursor and account operation lease coordinate manual and schedule
 
 ## Category decisions
 
-Explicit human choices win. Remembered description/group/currency matches and clear deterministic rules precede Gemini. Conflicting or ambiguous evidence stays unresolved. Gemini receives bounded expense descriptions and source category labels with the category definitions; it does not receive friend identities, notes, amounts, or credentials for matching.
+Explicit human choices win. Remembered description/group/currency matches and clear deterministic rules precede Gemini. Conflicting or ambiguous evidence stays unresolved. Gemini receives bounded expense descriptions, group titles and source category labels with the category definitions; it does not receive separate member identities, notes, amounts, or credentials for matching.
 
 Classification uses bounded batches with validated structured output. Failures remain queued for retry. Historical expenses that remain unclear after a valid AI decision enter Others, avoiding a large onboarding review queue. New unclear records request in-app review, including newly discovered backdated purchases. Others remains editable. Misc and Lux require their actual meaning, rather than serving as generic fallbacks.
 

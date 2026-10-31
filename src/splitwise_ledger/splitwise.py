@@ -51,6 +51,16 @@ class SplitwiseClient:
             "email": str(user.get("email") or ""),
         }
 
+    async def groups(self, token: dict) -> dict[str, str]:
+        """Retain titles only; discard member identities, balances and invite links."""
+        async with httpx.AsyncClient(timeout=30) as client:
+            data = await self._get(client, "get_groups", token)
+        return {
+            str(int(group["id"])): str(group["name"]).strip()[:160]
+            for group in data["groups"]
+            if int(group["id"]) > 0 and isinstance(group.get("name"), str)
+        }
+
     @staticmethod
     async def _get(client, endpoint, token, params=None):
         response = await client.get(

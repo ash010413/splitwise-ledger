@@ -261,3 +261,18 @@ def test_personal_rule_overrides_conflicting_automatic_signals(raw):
     record = normalize_expense(raw, 7)
     rule = {"description": "dinner", "group_id": 4, "currency": "USD", "category": "Misc"}
     assert classify(record, [rule]) == ("Misc", "approved_rule")
+
+
+@pytest.mark.parametrize(
+    "description,title,expected",
+    [
+        ("Jan 2026", "Spotify Family", Category.ENTERTAINMENT),
+        ("February 2026", "Spotify", Category.ENTERTAINMENT),
+        ("Jan 2026", "Friends", None),
+        ("Dinner", "Spotify Family", Category.DINING),
+        ("Jan 2026 gift", "Spotify Family", None),
+    ],
+)
+def test_group_context_only_fills_specific_recurring_purpose(raw, description, title, expected):
+    raw.update(description=description, category={"name": "General"})
+    assert classify(normalize_expense(raw, 7), [], title)[0] == expected

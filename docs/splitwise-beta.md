@@ -20,7 +20,7 @@ The service records only the authenticated user's owed share. Payments, settleme
 | Food / Dining | Meals, coffee and food eaten out |
 | Groceries | Food and ingredients purchased for home |
 | Misc | Necessary expenses outside other categories, or spending for others |
-| Movie / Entertainment | Movies, event tickets and outside entertainment |
+| Movie / Entertainment | Movies, event tickets, outside entertainment and Spotify subscriptions |
 | Phone | Phone bills, iCloud and related subscriptions |
 | AI | AI subscriptions and services |
 | Badminton / Sports | Badminton and other sports spending |
@@ -33,3 +33,19 @@ Rules run first, Gemini handles unresolved descriptions using these same definit
 The API uses bounded AI batches, source revisions and account leases to avoid overlapping work. Category matching and on-demand summaries are separate operations; summaries never mutate the ledger.
 
 See [architecture](architecture.md) for security and persistence boundaries and [deployment](../deploy/gcp/README.md) for hosted configuration.
+
+
+## Group context
+
+The backend fetches Splitwise group IDs/titles with the account's authorization and caches
+only the ID-to-title mapping. The full member list, debts and invite links are discarded.
+Gemini receives a bounded title alongside the description and source category, not the
+numeric group ID. Group titles are untrusted context rather than instructions. Generic
+Friends/Housemates groups do not imply a category; explicit purchase descriptions take
+priority over group themes. Month-only payments in a Spotify group map to Movie /
+Entertainment. Manual choices still win.
+
+Group metadata refreshes daily and on manual sync. A failed lookup preserves expenses and
+cached context, shows a warning and backs off before retrying. A context fingerprint allows
+previously uncertain automatic decisions to be reconsidered when titles change, without
+changing financial source revisions or human reviews.

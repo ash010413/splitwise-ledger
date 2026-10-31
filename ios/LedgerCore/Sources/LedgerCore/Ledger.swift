@@ -31,7 +31,7 @@ public enum SpendCategory: String, CaseIterable, Identifiable, Sendable, Codable
         case .dining: "Meals, coffee and food eaten out."
         case .groceries: "Food and ingredients purchased for home."
         case .misc: "Necessary uncategorized expenses and spending for others. Never an automatic fallback."
-        case .entertainment: "Movies, event tickets and entertainment outside home."
+        case .entertainment: "Movies, event tickets, entertainment outside home and Spotify subscriptions."
         case .phone: "Phone bills, iCloud and related subscriptions."
         case .ai: "AI subscriptions and services."
         case .sports: "Badminton and other sports expenses."

@@ -32,7 +32,7 @@ struct OnboardingView: View {
                     }.frame(maxWidth: .infinity).padding(19)
                         .foregroundStyle(.white).background(teal, in: Capsule())
                 }.disabled(model.isSigningIn)
-                Text("Sign in securely through Splitwise. Minto never changes your Splitwise expenses. Expense descriptions and category labels are sent to Gemini for category matching.")
+                Text("Sign in securely through Splitwise. Minto never changes your Splitwise expenses. Expense descriptions, group titles and category labels are sent to Gemini for category matching.")
                     .font(.caption).foregroundStyle(.secondary).lineSpacing(3)
                 Spacer(minLength: 20)
             }.padding(30).frame(maxWidth: 520, alignment: .leading).frame(maxWidth: .infinity)

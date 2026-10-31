@@ -112,11 +112,13 @@ class Store:
 
     def _rematch(self, db, rules):
         changed = 0
+        context = db.execute("SELECT value FROM settings WHERE key='splitwise_groups'").fetchone()
+        titles = json.loads(context[0]) if context else {}
         for row in db.execute("SELECT * FROM expenses").fetchall():
             record = json.loads(row["payload"])
             if not record["excluded"] and row["reason"] in {"human", "source_changed"}:
                 continue
-            category, reason = classify(record, rules)
+            category, reason = classify(record, rules, titles.get(str(record.get("group_id")), ""))
             if (
                 row["reason"] in {"gemini", "historical_fallback"}
                 and not record["excluded"]

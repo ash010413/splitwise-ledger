@@ -42,13 +42,15 @@ def event(events, expense_id, action, payload):
     )
 
 
-def rematch(rows, rules, events):
+def rematch(rows, rules, events, titles=None):
     changed = 0
     for row in rows.values():
         record = row["payload"]
         if not record["excluded"] and row["reason"] in {"human", "source_changed"}:
             continue
-        category, reason = classify(record, rules)
+        category, reason = classify(
+            record, rules, (titles or {}).get(str(record.get("group_id")), "")
+        )
         if (
             row["reason"] in {"gemini", "historical_fallback"}
             and not record["excluded"]
@@ -201,7 +203,7 @@ class FirestoreLedger:
                     "source_updated" if old else "imported",
                     {"revision": record["revision"], "category": category, "reason": reason},
                 )
-            rematch(rows, meta["rules"], events)
+            rematch(rows, meta["rules"], events, meta["settings"].get("splitwise_groups"))
             if "history_initialized" not in settings:
                 for row in rows.values():
                     row["historical"] = True
@@ -222,7 +224,7 @@ class FirestoreLedger:
 
     def reclassify(self, policy=None):
         def update(meta, rows, events):
-            changed = rematch(rows, meta["rules"], events)
+            changed = rematch(rows, meta["rules"], events, meta["settings"].get("splitwise_groups"))
             if policy:
                 for key, row in rows.items():
                     decision = row.get("ai", {}).get(policy)
@@ -375,7 +377,7 @@ class FirestoreLedger:
                         "category": category.value,
                     }
                 )
-                rematch(rows, meta["rules"], events)
+                rematch(rows, meta["rules"], events, meta["settings"].get("splitwise_groups"))
             event(
                 events,
                 expense_id,

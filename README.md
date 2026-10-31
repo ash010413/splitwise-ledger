@@ -33,7 +33,7 @@ flowchart LR
     API -->|Daily incremental sync or manual refresh| Splitwise["Splitwise API"]
     API <-->|Account-scoped ledger and sync state| DB["Cloud Firestore"]
     Secrets["Secret Manager"] --> API
-    API -->|Unresolved descriptions + category definitions| Gemini["Gemini API"]
+    API -->|Unresolved descriptions + group titles + definitions| Gemini["Gemini API"]
     API -->|Category totals + summary conversation| Gemini
 ```
 
