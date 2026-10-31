@@ -28,7 +28,7 @@ The service records only the authenticated user's owed share. Payments, settleme
 | Lux | Extra discretionary purchases for yourself |
 | Others | Historical purchases still unclear after classification |
 
-Rules run first, Gemini handles unresolved descriptions, and human choices take precedence. Unclear history can enter Others; unclear new expenses appear in the in-app review queue. AI errors remain queued rather than being treated as classification decisions. Remembered rules match a description within its group and currency scope.
+Rules run first, Gemini handles unresolved descriptions using these same definitions, and human choices take precedence. Ordinary Costco shopping defaults to Groceries; an explicit fuel purchase stays Car, and other specific non-grocery purposes override that default. Elec/Elec bills map to Home. Unclear history can enter Others; unclear new expenses appear in the in-app review queue. AI errors remain queued rather than being treated as classification decisions. A new classification policy rechecks old automatic Others decisions once, preserving human choices and recording each retry in the audit trail. Remembered rules match a description within its group and currency scope.
 
 The API uses bounded AI batches, source revisions and account leases to avoid overlapping work. Category matching and on-demand summaries are separate operations; summaries never mutate the ledger.
 

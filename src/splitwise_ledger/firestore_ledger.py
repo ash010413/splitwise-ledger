@@ -220,8 +220,21 @@ class FirestoreLedger:
             ]
         )
 
-    def reclassify(self):
-        return self._run(lambda meta, rows, events: rematch(rows, meta["rules"], events))
+    def reclassify(self, policy=None):
+        def update(meta, rows, events):
+            changed = rematch(rows, meta["rules"], events)
+            if policy:
+                for key, row in rows.items():
+                    decision = row.get("ai", {}).get(policy)
+                    if row["reason"] == "historical_fallback" and (
+                        not decision or decision["revision"] != row["revision"]
+                    ):
+                        row.update(category=None, reason="needs_review")
+                        event(events, int(key), "category_policy_retry", {"policy": policy})
+                        changed += 1
+            return changed
+
+        return self._run(update)
 
     def begin_history(self):
         def update(meta, rows, events):

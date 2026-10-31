@@ -97,14 +97,17 @@ SOURCE_CATEGORIES = {
     "sports": Category.SPORTS,
 }
 
-# Whole words/phrases only. Costco, Amazon, Walmart and generic "subscription"
-# remain ambiguous; they sell goods spanning several of this user's categories.
+# Whole words/phrases only. Apply the user's Costco grocery default below,
+# after specific purchase-purpose signals; other broad merchants remain ambiguous.
 DESCRIPTION_PATTERNS = {
     Category.HOME: (
-        r"\b(rent|renters? insurance|electricity|electric bill|water bill|utilities|"
+        r"\b(rent|renters? insurance|electricity|electric bills?|elec\.?([ -]+bills?)?|"
+        r"water bills?|utilities|"
         r"utility bill|home internet|internet bill|wifi bill)\b"
     ),
-    Category.CAR: r"\b(fuel|petrol|gas station|car wash|car insurance|auto insurance|parking)\b",
+    Category.CAR: (
+        r"\b(fuel|petrol|gas station|costco gas|car wash|car insurance|auto insurance|parking)\b"
+    ),
     Category.TRAVEL: (
         r"\b(flight|flights|airfare|airline|hotel|airbnb|car rental|"
         r"rental car|car rent|rent a car)\b"
@@ -150,6 +153,18 @@ def classify(record: dict, rules: list[dict]) -> tuple[str | None, str]:
     )
     if source:
         signals.add(source)
+    # The owner's taxonomy explicitly treats ordinary Costco shopping as groceries.
+    # Specific evidence (fuel, source category, non-food items) wins over this default.
+    if (
+        not signals
+        and re.search(r"\bcostco\b", description)
+        and not re.search(
+            r"\b(gas|electronics?|tv|television|laptop|headphones|furniture|tires?|tyres?|"
+            r"clothing|clothes|shoes|membership|pizza|food court|hot dogs?|appliances?)\b",
+            description,
+        )
+    ):
+        signals.add(Category.GROCERIES)
     # These phrases explicitly suggest a different purpose than a bare keyword.
     # Never guess Misc/Lux, or auto-file a mixed purchase in just one category.
     if re.search(r"\b(gift|gifts|reimbursement|refund|mixed|stock|stocks)\b", description):

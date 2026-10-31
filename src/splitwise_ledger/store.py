@@ -133,11 +133,28 @@ class Store:
             changed += 1
         return changed
 
-    def reclassify(self):
+    def reclassify(self, policy=None):
         """Upgrade matching on existing imports while preserving explicit human decisions."""
         with self.transaction() as db:
             rules = [json.loads(r[0]) for r in db.execute("SELECT payload FROM rules")]
-            return self._rematch(db, rules)
+            changed = self._rematch(db, rules)
+            if policy:
+                # Retry only automatic historical fallbacks lacking a decision for this policy.
+                # Human choices, remembered rules and successful AI categories remain intact.
+                rows = db.execute(
+                    """SELECT e.id FROM expenses e WHERE e.reason='historical_fallback'
+                    AND NOT EXISTS (SELECT 1 FROM ai_decisions a WHERE a.expense_id=e.id
+                    AND a.revision=e.revision AND a.policy=?)""",
+                    (policy,),
+                ).fetchall()
+                for row in rows:
+                    db.execute(
+                        "UPDATE expenses SET category=NULL,reason='needs_review' WHERE id=?",
+                        (row["id"],),
+                    )
+                    self.audit(db, row["id"], "category_policy_retry", {"policy": policy})
+                changed += len(rows)
+            return changed
 
     def expenses(self) -> list[dict]:
         with self.transaction() as db:

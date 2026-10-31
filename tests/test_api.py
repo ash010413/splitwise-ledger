@@ -25,7 +25,7 @@ class FakeProvider:
             normalize_expense(
                 {
                     "id": 1,
-                    "description": "Costco",
+                    "description": "Unclear purchase",
                     "date": "2026-10-25T12:00:00Z",
                     "currency_code": "USD",
                     "cost": "25.00",

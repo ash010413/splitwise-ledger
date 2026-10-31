@@ -257,6 +257,7 @@ def mobile_router(settings, provider, accounts, analysis, review_type, oauth_fai
         async with lock, accounts.operation(user_id):
             ledger = accounts.ledger(user_id)
             ledger.begin_history()
+            ledger.reclassify(POLICY_VERSION)
             last = ledger.get("last_successful_sync_at")
             if last is None and ledger.get("sync_cursor"):
                 try:
@@ -359,6 +360,7 @@ def mobile_router(settings, provider, accounts, analysis, review_type, oauth_fai
     def expenses(user_id=require_user):
         ledger = accounts.ledger(user_id)
         ledger.begin_history()
+        ledger.reclassify(POLICY_VERSION)
         ledger.finish_history(POLICY_VERSION)
         historical = ledger.historical_ids()
         auto_enabled = bool(settings.gemini_api_key and settings.gemini_auto_categorize)

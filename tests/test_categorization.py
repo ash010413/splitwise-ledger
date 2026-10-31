@@ -73,7 +73,11 @@ def test_matching_uses_minimal_context_and_does_not_repeat_uncertain_items(store
         body = json.loads(req.content)
         items = json.loads(body["contents"][0]["parts"][0]["text"])
         assert set(items[0]) == {"item", "description", "source_category"}
-        assert "Misc" in body["systemInstruction"]["parts"][0]["text"]
+        instruction = body["systemInstruction"]["parts"][0]["text"]
+        assert "Misc" in instruction
+        assert "bare Costco description" in instruction
+        assert "Elec bills" in instruction
+        assert "Costco/Amazon/Walmart" not in instruction
         calls.append(1)
 
     # Store returns the most recent ID first: QZ, then Trader Joe's.
@@ -220,3 +224,62 @@ def test_edited_historical_fallback_gets_a_fresh_gemini_attempt(store):
         "test",
     )
     assert store.expenses()[0]["category"] == Category.GROCERIES
+
+
+def test_new_policy_retries_old_automatic_others_once_and_preserves_human_choices(store):
+    old_policy = "minto-categories-v1"
+    store.begin_history()
+    groups = store.ai_pending(old_policy)
+    store.apply_ai_decisions(
+        groups,
+        [Decision(item=i, category=None, certain=False, reason="Unclear") for i in range(2)],
+        old_policy,
+        "old-model",
+    )
+    assert store.finish_history(old_policy) == 2
+    before = {r["id"]: (r["revision"], r["my_share"]) for r in store.expenses()}
+    human = store.expenses()[0]
+    store.review(human["id"], human["revision"], Category.OTHERS, False)
+    assert store.reclassify(POLICY_VERSION) == 1
+    assert store.reclassify(POLICY_VERSION) == 0
+    groups = store.ai_pending(POLICY_VERSION)
+    assert [r["id"] for g in groups for r in g] == [1]
+    store.apply_ai_decisions(
+        groups,
+        [Decision(item=0, category=None, certain=False, reason="Still unclear")],
+        POLICY_VERSION,
+        "new-model",
+    )
+    assert store.finish_history(POLICY_VERSION) == 1
+    assert store.reclassify(POLICY_VERSION) == 0
+    assert store.ai_pending(POLICY_VERSION) == []
+    assert {r["id"]: (r["revision"], r["my_share"]) for r in store.expenses()} == before
+    assert store.expenses()[0]["reason"] == "human"
+
+
+def test_rule_upgrade_repairs_old_others_without_ai_and_preserves_human(store):
+    # Simulate persisted imports from the older rules using each adapter's transaction API.
+    if hasattr(store, "_run"):
+
+        def old_rows(meta, rows, events):
+            for key, row in rows.items():
+                row["payload"]["description"] = "Costco" if key == "1" else "Elec bills"
+                row.update(category=Category.OTHERS.value, reason="historical_fallback")
+
+        store._run(old_rows)
+    else:
+        with store.transaction() as db:
+            for row in db.execute("SELECT * FROM expenses").fetchall():
+                payload = json.loads(row["payload"])
+                payload["description"] = "Costco" if row["id"] == 1 else "Elec bills"
+                db.execute(
+                    "UPDATE expenses SET payload=?,category=?,reason=? WHERE id=?",
+                    (json.dumps(payload), Category.OTHERS.value, "historical_fallback", row["id"]),
+                )
+    assert store.reclassify(POLICY_VERSION) == 2
+    assert {r["id"]: r["category"] for r in store.expenses()} == {
+        1: Category.GROCERIES,
+        2: Category.HOME,
+    }
+    assert store.reclassify(POLICY_VERSION) == 0
+    assert store.ai_pending(POLICY_VERSION) == []

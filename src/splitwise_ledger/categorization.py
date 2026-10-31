@@ -7,14 +7,16 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .domain import Category
 
-POLICY_VERSION = "minto-categories-v1"
+POLICY_VERSION = "minto-categories-v2"
 CATEGORY_RULES = {
-    Category.HOME: "Rent, utilities, renters insurance, electricity and related home costs.",
+    Category.HOME: "Rent, utilities, renters insurance, electricity (including Elec/Elec bills) "
+    "and related home costs.",
     Category.CAR: "Fuel, car insurance, car washes and other car-related expenses.",
     Category.TRAVEL: "Flights and travel expenses.",
     Category.DINING: "Food and drinks consumed eating out, including restaurants and takeaway.",
     Category.GROCERIES: "Food and ingredients bought for home, including Costco "
-    "and Indian groceries.",
+    "and Indian groceries. Ordinary Costco shopping defaults to Groceries unless a specific "
+    "non-grocery purpose is stated.",
     Category.MISC: "Unavoidable costs, spending for others, or costs outside every other category. "
     "Use only when the description establishes this purpose, never for unknowns.",
     Category.ENTERTAINMENT: "Movies, tickets and entertainment outside home.",
@@ -73,6 +75,7 @@ OUTPUT_SCHEMA = {
 
 
 async def categorize_pending(store, key: str, model: str):
+    store.reclassify(POLICY_VERSION)
     groups = store.ai_pending(POLICY_VERSION, limit=40)
     if not groups:
         return {"matched": 0, "review": 0, "remaining": 0}
@@ -93,8 +96,13 @@ async def categorize_pending(store, key: str, model: str):
         "Apply a category with certain=true only for a clear match. If ambiguous, conflicting, "
         "mixed-category, or the recipient/purpose is unknown, use category='Needs review' "
         "and certain=false. "
-        "Never use Misc or Lux just because you cannot identify a purchase. Costco/Amazon/Walmart "
-        "alone do not establish the item purchased. Insurance alone does not distinguish Home/Car. "
+        "Never use Misc or Lux just because you cannot identify a purchase. Follow the owner's "
+        "explicit merchant default: ordinary Costco shopping, including a bare Costco description, "
+        "belongs to Groceries. Specific purposes override that default: Costco fuel is Car; "
+        "Costco food court is Food / Dining. Do not assume non-food items are groceries. "
+        "Elec and Elec bills refer to home electricity and belong to Home. "
+        "Amazon/Walmart alone do not establish the item purchased. "
+        "Insurance alone does not distinguish Home/Car. "
         "A vague name or initials require review. Keep each reason under 20 words. "
         "A specific functional category takes priority over Lux or Misc: running shoes and "
         "sports equipment belong to Badminton / Sports, not Lux; gym subscriptions belong to "
