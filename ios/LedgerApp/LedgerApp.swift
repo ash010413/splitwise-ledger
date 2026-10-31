@@ -7,6 +7,33 @@ let ink = Color(red: 0.10, green: 0.19, blue: 0.18)
 let teal = Color(red: 0.16, green: 0.45, blue: 0.37)
 let paper = Color(red: 0.97, green: 0.97, blue: 0.94)
 
+/// Offline capture harness. Unavailable in device builds and all Release builds.
+enum SimulatorDemo {
+    static var enabled: Bool {
+        #if DEBUG && targetEnvironment(simulator)
+        return ProcessInfo.processInfo.arguments.contains("--demo")
+        #else
+        return false
+        #endif
+    }
+    static func snapshot() throws -> SplitwiseSnapshot {
+        let descriptions = ["Apartment rent", "Fuel and insurance", "Weekend train trip", "Neighborhood café", "Market groceries", "Household essentials", "Cinema tickets", "Phone plan", "AI subscription", "Badminton court", "Gym membership", "New headphones", "Historical purchase"]
+        let bases = [1650, 180, 120, 145, 260, 45, 28, 30, 20, 24, 35, 85, 15]
+        var rows: [[String: Any]] = []
+        for offset in 0..<12 {
+            let month = ChartPeriod.shifted("2025-11", by: offset)!
+            for (index, category) in SpendCategory.allCases.enumerated() {
+                rows.append(["id": offset * 100 + index + 1, "revision": "demo-1",
+                    "description": descriptions[index], "date": "\(month)-15T12:00:00Z",
+                    "currency": "USD", "my_share": String(bases[index] + (index < 2 ? 0 : offset % 4 * 7)),
+                    "category": category.rawValue, "reason": "Synthetic demo data", "review_required": false])
+            }
+        }
+        return try JSONDecoder().decode(SplitwiseSnapshot.self,
+            from: JSONSerialization.data(withJSONObject: ["expenses": rows]))
+    }
+}
+
 @MainActor @Observable
 final class LedgerModel {
     var data: LedgerDataset?
@@ -15,8 +42,8 @@ final class LedgerModel {
         didSet { showSelectedMonthOnChart() }
     }
     var isRefreshing = false
-    var useSplitwise = UserDefaults.standard.object(forKey: "minto.useSplitwise") as? Bool ?? true
-    var isSignedIn = MobileCredential.read() != nil
+    var useSplitwise = SimulatorDemo.enabled ? true : UserDefaults.standard.object(forKey: "minto.useSplitwise") as? Bool ?? true
+    var isSignedIn = SimulatorDemo.enabled ? false : MobileCredential.read() != nil
     var currency = UserDefaults.standard.string(forKey: "minto.currency") ?? "USD"
     var availableCurrencies = ["USD"]
     var expenses: [SplitwiseExpense] = []
@@ -92,6 +119,7 @@ final class LedgerModel {
     init(repository: (any LedgerRepository)? = nil) {
         self.repository = repository ?? SheetsLedgerRepository(sheetID: SheetConnection.sheetID, summaryTab: SheetConnection.summaryTab)
         availableCurrencies = [currency]
+        if SimulatorDemo.enabled { currency = "USD"; return }
         if (!useSplitwise || isSignedIn), let cached = try? Data(contentsOf: cacheURL),
            let snapshot = try? JSONDecoder().decode(LedgerDataset.self, from: cached), !snapshot.isPreview {
             if data?.months.first?.currency != snapshot.months.first?.currency { chartEndID = nil }
@@ -109,6 +137,17 @@ final class LedgerModel {
         data?.previousMonth(before: selectedMonthID)
     }
     func load(sync: Bool = false, force: Bool = false) async {
+        if SimulatorDemo.enabled {
+            guard isSignedIn else { return }
+            do {
+                let snapshot = try SimulatorDemo.snapshot()
+                expenses = snapshot.expenses
+                data = try snapshot.dataset(currency: "USD")
+                profile = Profile(name: "Alex Morgan", email: "alex@example.com")
+                if selectedMonthID.isEmpty { selectedMonthID = "2026-10" }
+            } catch { self.error = "Demo fixture could not load." }
+            return
+        }
         guard !isRefreshing else { return }
         isRefreshing = true
         let identity = MobileCredential.identity
@@ -183,6 +222,7 @@ final class LedgerModel {
     }
 
     func signIn() async {
+        if SimulatorDemo.enabled { isSignedIn = true; await load(); return }
         guard !isSigningIn else { return }
         isSigningIn = true
         defer { isSigningIn = false; browser = nil }
@@ -201,6 +241,7 @@ final class LedgerModel {
         } catch { self.error = error.localizedDescription }
     }
     func signOut() async {
+        if SimulatorDemo.enabled { isSignedIn = false; data = nil; expenses = []; profile = nil; return }
         data = nil; expenses = []; profile = nil; didLoadProfile = false; selectedMonthID = ""
         isSignedIn = false; showCategoryReview = false; stopAutoCategorizing = true
         isShowingSpendingDetail = false; reviewQueue = []
@@ -212,6 +253,7 @@ final class LedgerModel {
     }
     @discardableResult
     func review(_ expense: SplitwiseExpense, category: SpendCategory, remember: Bool) async -> Bool {
+        guard !SimulatorDemo.enabled else { return false }
         do {
             let body = try JSONSerialization.data(withJSONObject: [
                 "revision": expense.revision, "category": category.rawValue, "remember_rule": remember
@@ -230,6 +272,7 @@ final class LedgerModel {
 @main
 struct LedgerApp: App {
     @State private var model = LedgerModel()
+    @State private var demoTab = 0
     @Environment(\.scenePhase) private var scenePhase
     var body: some Scene {
         WindowGroup {
@@ -237,22 +280,39 @@ struct LedgerApp: App {
                 if model.useSplitwise && !model.isSignedIn {
                     OnboardingView(model: model)
                 } else {
-                    TabView {
-                        DashboardView(model: model).tabItem { Label("Overview", systemImage: "square.grid.2x2") }
+                    TabView(selection: $demoTab) {
+                        DashboardView(model: model).tag(0).tabItem { Label("Overview", systemImage: "square.grid.2x2") }
                         if model.useSplitwise && model.isSignedIn {
-                            ExpenseReviewView(model: model).tabItem { Label("Expenses", systemImage: "list.bullet.rectangle") }
+                            ExpenseReviewView(model: model).tag(1).tabItem { Label("Expenses", systemImage: "list.bullet.rectangle") }
                         }
-                        SettingsView(model: model).tabItem { Label("Settings", systemImage: "slider.horizontal.3") }
+                        SettingsView(model: model).tag(2).tabItem { Label("Settings", systemImage: "slider.horizontal.3") }
                     }
                 }
             }
+            .task {
+                guard SimulatorDemo.enabled, ProcessInfo.processInfo.arguments.contains("--demo-tour") else { return }
+                try? await Task.sleep(for: .seconds(3))
+                await model.signIn()
+                try? await Task.sleep(for: .seconds(23))
+                demoTab = 1
+                try? await Task.sleep(for: .seconds(6))
+                demoTab = 2
+                try? await Task.sleep(for: .seconds(6))
+                demoTab = 0
+            }
             .tint(teal).preferredColorScheme(.light)
+            .safeAreaInset(edge: .top) {
+                if SimulatorDemo.enabled {
+                    Text("DEMO · SYNTHETIC DATA · OFFLINE").font(.caption2.bold())
+                        .tracking(1).foregroundStyle(teal).frame(maxWidth: .infinity).padding(6).background(paper)
+                }
+            }
             .sheet(isPresented: $model.showCategoryReview) {
                 CategoryReviewSheet(model: model, expenses: model.reviewQueue)
             }
             .task(id: "\(scenePhase)-\(model.isSignedIn)") {
                 guard scenePhase == .active, model.isSignedIn || !model.useSplitwise else { return }
-                SummaryConnection.configureDevelopmentSession()
+                if !SimulatorDemo.enabled { SummaryConnection.configureDevelopmentSession() }
                 await model.load(sync: true)
                 await model.autoCategorize()
                 model.offerReview()
@@ -341,6 +401,18 @@ struct DashboardView: View {
             }
             .sheet(item: $summaryScope, onDismiss: { model.isShowingSpendingDetail = false; model.offerReview() }) { scope in
                 AISummaryView(month: scope.month, previous: scope.previous, fetchedAt: scope.fetchedAt, coveredMonths: scope.coveredMonths)
+            }
+            .task {
+                guard SimulatorDemo.enabled, ProcessInfo.processInfo.arguments.contains("--demo-tour") else { return }
+                try? await Task.sleep(for: .seconds(5))
+                selectedCategory = .groceries
+                try? await Task.sleep(for: .seconds(5))
+                selectedCategory = nil
+                model.chartRange = 12
+                try? await Task.sleep(for: .seconds(3))
+                summaryScope = model.makeSummaryScope()
+                try? await Task.sleep(for: .seconds(7))
+                summaryScope = nil
             }
             .navigationTitle("Minto").navigationBarTitleDisplayMode(.inline)
             .onChange(of: model.selectedMonthID) { _, _ in model.showSelectedMonthOnChart() }
@@ -725,7 +797,7 @@ struct AISummaryView: View {
                     }
                     if let summary {
                         SummaryContent(text: summary)
-                        Text("Generated by Gemini. Check observations against the figures above.").font(.caption).foregroundStyle(.secondary)
+                        Text(SimulatorDemo.enabled ? "Illustrative demo response · no Gemini request was made." : "Generated by Gemini. Check observations against the figures above.").font(.caption).foregroundStyle(.secondary)
                         ForEach(conversation) { message in
                             VStack(alignment: .leading, spacing: 8) {
                                 Text(message.role == "user" ? "YOU" : "MINTO")
@@ -771,6 +843,16 @@ struct AISummaryView: View {
         }.tint(teal).task { await generate() }
     }
     @MainActor private func generate(followUp: String? = nil) async {
+        if SimulatorDemo.enabled {
+            let largest = SpendCategory.allCases.max { month.amount($0) < month.amount($1) } ?? .home
+            let answer = "## Your spending in focus\nYour share totals **\(month.total.money(month.currency ?? "USD"))** for this period.\n- **\(largest.rawValue)** is your largest category at **\(month.amount(largest).money("USD"))**.\n- Tap a category to see the purchases behind its total.\n- Settlements are excluded from spending.\nThis is an illustrative response calculated from synthetic demo data."
+            if let followUp {
+                conversation.append(.init(role: "user", text: followUp))
+                conversation.append(.init(role: "model", text: answer))
+                question = ""
+            } else { summary = answer; conversation = [] }
+            return
+        }
         guard !isLoading else { return }
         error = nil
         guard let token = MobileCredential.read() ?? AppCredential.read(), !token.isEmpty else {

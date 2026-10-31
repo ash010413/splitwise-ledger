@@ -1,4 +1,4 @@
-# Minto hosted private beta
+# Cloud deployment runbook
 
 Project: `minto-513300` · Region: `us-central1`
 
@@ -18,8 +18,7 @@ Secret Manager versions; no service-account key files are generated.
 
 The default Firestore database is Standard/Native mode in `us-central1`, eligible
 for the database free allowance. No paid PITR, TTL deletion or scheduled database
-backup feature is enabled. Private SQLite backups from before migration remain on
-the owner's Mac in the ignored `data/backups/` directory.
+backup feature is enabled. Establish and test a restore procedure before expanding the beta.
 
 One Cloud Scheduler job, `minto-daily-sync`, runs hourly and checks persisted daily
 sync timestamps. It does not fetch Splitwise hourly: each account is imported at
@@ -53,7 +52,7 @@ for a small beta; capacity errors require repartitioning rather than dropping da
 OAuth attempts and native session hashes are separate documents with server-side
 expiry validation. Provider tokens remain encrypted. Native sessions are bound to
 the backend URL on the device and are not copied during migration. The initial beta
-allows four connected accounts (owner plus up to three friends).
+allows four connected accounts (up to four users; capacity is not an invitation allowlist).
 
 Firestore transactions protect one-use OAuth exchanges and category edits. Per-user
 leases coordinate sync and matching across overlapping Cloud Run revisions. Writes
@@ -63,7 +62,7 @@ OIDC token, audience, verified email and the dedicated scheduler identity.
 
 ## Redeploy
 
-Authenticate with `gcloud auth login` using the project owner's account. Install
+Authenticate with `gcloud auth login` using an authorized deployment account. Install
 backend tools with `pip install -e '.[dev,cloud]'`. No password or key belongs in Git.
 
 Create an empty, allowlisted context (choose a new temporary directory each time):

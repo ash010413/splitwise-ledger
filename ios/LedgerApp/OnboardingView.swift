@@ -27,7 +27,7 @@ struct OnboardingView: View {
                 Button { Task { await model.signIn() } } label: {
                     HStack(spacing: 12) {
                         if model.isSigningIn { ProgressView().tint(.white) }
-                        Text(model.isSigningIn ? "Connecting…" : "Continue with Splitwise").font(.headline)
+                        Text(model.isSigningIn ? "Connecting…" : (SimulatorDemo.enabled ? "Explore demo" : "Continue with Splitwise")).font(.headline)
                         if !model.isSigningIn { Image(systemName: "arrow.right") }
                     }.frame(maxWidth: .infinity).padding(19)
                         .foregroundStyle(.white).background(teal, in: Capsule())

@@ -1,167 +1,36 @@
-## Hosted backend
+# Minto for iPhone
 
-Release builds now use `Production.xcconfig` and the hosted HTTPS backend. Debug
-builds inherit that endpoint, with optional local overrides. Rebuild and sign in
-once when moving from the Mac server; no shared network or on-device API key is
-needed. See [the GCP guide](../deploy/gcp/README.md). TestFlight upload remains a
-separate step.
+Native SwiftUI and Swift Charts client, targeting iOS 17+. Open `LedgerApp.xcodeproj` in Xcode and select the **Ledger** scheme. Choose your development team before building on a device. Preserve your local signing settings.
 
-## Splitwise OAuth beta
+## Configuration
 
-New builds open on **Continue with Splitwise**. Use the existing Minto app and
-signing configuration; no separate app or repository is needed. See
-[the OAuth setup guide](../docs/splitwise-beta.md) for the registered callback,
-local server setup, account isolation and remaining live checks. The Expenses tab
-shows personal shares and category review. Settings selects currency; currencies
-are never merged. OAuth sessions replace the manually provisioned summary token.
+`Configuration.xcconfig` includes the public `Production.xcconfig` and an optional ignored `Development.local.xcconfig`. Release uses the production configuration. The backend address is public configuration; Splitwise and Gemini secrets belong only on the backend.
 
-The Google Sheets instructions below describe the retained earlier prototype.
+Debug simulator builds default to localhost unless `MINTO_BACKEND_URL` is supplied in the scheme environment. For a physical device, use the hosted HTTPS endpoint or a reachable development hostname with a matching OAuth callback. Do not distribute a build pointing to a developer's Mac.
 
-# Minto for iOS
+## Offline simulator demo
 
-Native SwiftUI app, iOS 17+ and Xcode 16+. Open `LedgerApp.xcodeproj`, choose the
-`Ledger` scheme and an iPhone simulator, then Run. Existing signing settings are
-preserved. On a physical device select your own signing team.
-
-## Live Google Sheets
-
-The app reads the existing shared spreadsheet directly over HTTPS, using its current
-Anyone-with-the-link viewing access. No Google credentials, backend, AI key or sheet
-edits are required for the dashboard. Sharing permissions are not changed by the app.
-If access is restricted later, add a Google authorization adapter; do not silently
-fall back to preview numbers. Set `GOOGLE_SHEET_ID` and `GOOGLE_SUMMARY_TAB` in
-the ignored `.env`, then run `.venv/bin/python tools/configure_ios_backend.py`
-before building. This creates local Xcode configuration; no live Sheet ID or
-personal totals are included in the public source.
-
-- Summary tab comes from local configuration. Category rows match the twelve user-defined categories.
-- Month headers: `Jul 2026` format; Average and YTD columns are not imported as months.
-- Monthly category sums must exactly match `Total Monthly Expenses`. Invalid data
-  leaves the previous successful snapshot intact and displays an error.
-- Activity and transaction fetching are disabled until Splitwise integration is ready.
-- Settings category pages show each monthly total and a total across loaded months.
-- Currency is USD. Invalid currency formats, blank amounts, duplicate IDs, malformed
-  CSV, invalid dates and incomplete category rows fail validation rather than becoming zero.
-- Legacy sheet reads refresh on launch, foreground entry and pull-to-refresh.
-- Last successful snapshot is cached locally. The UI displays fetch time, errors and
-  refresh warnings. There is no claim of real-time or background push.
-
-Tap a monthly chart bar to select its month and see the amount. Category charts
-also select months. The redundant horizontal month chips have been removed. The month picker and
-category history rows remain available alongside direct chart selection. Category rows open definitions and their spending history.
-
-The overview picker also includes **All months**. It adds each loaded month's
-category values exactly once, updates the total and breakdown, and preserves that
-selection during refresh. Ask Minto receives the aggregate plus the covered month
-IDs, without a misleading previous-month comparison. Tap selection resolves the
-nearest bar center directly and does not rely on cached chart-selection changes.
-
-## Ask Minto (Gemini)
-
-The floating Ask Minto button, or Preview Gemini summary in Settings, opens an
-on-demand summary and immediately requests it using only selected-month and optional comparison-month category totals
-through the authenticated Python backend to Gemini. No transaction descriptions,
-friends, IDs or sheet URL enter the model payload. Summaries never alter categories,
-totals or the sheet. A summary remains labeled with the snapshot and month it analyzed.
-
-1. Add `GEMINI_API_KEY` to the repository's ignored `.env`. Optional `GEMINI_MODEL`
-   defaults to `gemini-3.5-flash-lite`; choose another supported model if your project requires it.
-2. Start or restart the backend from the repository root:
-
-   ```sh
-   .venv/bin/uvicorn splitwise_ledger.api:create_app --factory --host 127.0.0.1 --no-access-log
-   ```
-
-3. After building and installing the app on a booted simulator, run:
-
-   ```sh
-   .venv/bin/python tools/run_ios_development.py
-   ```
-
-   This developer command provisions the backend application token to the DEBUG
-   simulator app through its process environment, saving it in device-only Keychain.
-   It never prints the token, writes it into the app bundle, or sends the Gemini key
-   to the app. No backend URL, token field or credential setup appears in Settings.
-4. Tap Ask Minto, or Preview Gemini summary in Settings.
-
-The optional `--device` and `--backend-url` flags select another simulator/backend.
-Physical-device developers can configure `MINTO_BACKEND_URL` and `MINTO_APP_TOKEN`
-in a local, unshared debug scheme. Do not commit a secret-bearing scheme.
-Release builds exclude development credential provisioning. A hosted production
-release must provide `MintoBackendURL` in its build configuration and populate
-Keychain through real app authentication; the shared personal-development token is
-not a production authentication scheme. Gemini remains server-side in every build.
-
-For a real iPhone, localhost refers to the phone. Use an HTTPS-hosted backend, or for
-local development a reachable Mac `.local` hostname on the same trusted network.
-Run `.venv/bin/python tools/configure_ios_backend.py` once to create the ignored
-`ios/Development.local.xcconfig`. The Debug target includes this file via
-`Configuration.xcconfig` and expands the non-secret endpoint into `MintoBackendURL`.
-Rebuild the phone app after changing it. Run Uvicorn with `--host 0.0.0.0` so the
-phone can reach the protected backend, and keep both devices on the same network.
-The Mac must remain awake and the backend must be running. This configuration file
-contains no tokens. Existing device Keychain sessions are preserved across updates.
-The app has a local-network purpose string without disabling HTTPS checks for public
-hosts. Never expose the development server to the public Internet.
-
-The backend serializes model requests and caches the latest identical aggregate
-request for five minutes. It returns actionable missing-key, auth and provider errors
-without logging secret-bearing provider bodies. Gemini outputs are advisory; months
-may be incomplete. The monthly figures remain the deterministic source of truth.
-The default Flash-Lite model was verified with a live summary request. Larger Gemini 3
-models use low thinking; provider requests have bounded timeouts. Cache keys use
-canonical facts, so reordered JSON category keys do not cause duplicate generations.
-
-## Architecture and checks
-
-Foundation-only domain, CSV parser and Sheets repository live in
-`LedgerCore/Sources/LedgerCore/Ledger.swift`. That source is compiled by the Xcode target
-and by the standalone test package. `LedgerApp.swift` contains the main-actor model,
-views, Keychain boundary and analysis HTTP client. Sheets traffic is independent of
-AI availability. The Python `analysis.py` adapter is independent of Splitwise OAuth.
+Build **Debug** for an iPhone simulator and launch with `--demo`:
 
 ```sh
-DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test --package-path ios/LedgerCore
-# Explicit network integration test against the configured shared sheet:
-DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer LEDGER_LIVE_SHEETS=1 swift test --package-path ios/LedgerCore
-DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild \
-  -project ios/LedgerApp.xcodeproj -scheme Ledger -sdk iphonesimulator \
-  -destination 'generic/platform=iOS Simulator' \
-  -derivedDataPath /tmp/ledger-ios-build CODE_SIGNING_ALLOWED=NO build
+xcrun simctl launch booted com.ashwin.splitwiseledger --demo
 ```
 
-Google authorization for private sheets, multi-year tab selection,
-background push and production deployment are not included. The project generator is
-optional; do not regenerate over personal signing/scheme changes in Xcode.
+Add `--demo-tour` alongside `--demo` to advance automatically through the recorded screens.
 
-## Identity and launch
+This capture harness uses a fictional profile and 12 months of synthetic transactions. Totals and drill-down lists come from the same records. It bypasses login, Keychain provisioning and persisted account caches; mobile network requests are blocked. Explore demo opens the regular spending UI. AI responses are illustrative and labeled. Category edits are disabled in this presentation mode. This mode cannot activate in a Release build or on a physical iPhone. It does not demonstrate real OAuth or Gemini connectivity.
 
-The installed app is named Minto. The scheme remains Ledger and the bundle ID is
-unchanged to preserve device installs and Keychain access. The mint ribbon icon is
-compiled from Assets.xcassets; a native static LaunchScreen.storyboard uses the same
-mark and cream background with no artificial launch delay. See docs/brand/prompt.md
-for the ImageGen prompt and asset provenance.
+Record with `xcrun simctl io <SIMULATOR_ID> recordVideo --codec=h264 <OUTPUT.mov>` and stop with SIGINT. Encode the result as H.264 MP4 for browser compatibility. Keep the visible synthetic-data label in exported media. The published walkthrough is in `docs/media`.
 
-## Chart periods and automatic category matching
+## Structure and validation
 
-Overview and category charts show six months by default, with 3M/6M/12M controls
-and arrows for historical periods. The graph window does not change All months totals.
+`LedgerApp` contains the app shell, dashboard, expense lists, category review, account settings and interactive summary view. `LedgerCore` owns financial parsing, aggregation and chart calculations. Backend sessions are stored in Keychain; cached spending is scoped to account and currency. Sign-out clears the local session and spending cache.
 
-Gemini checks remaining expenses against the user-defined taxonomy, in batches while
-the app is open. Expenses shows matching progress, a pause action and editable Gemini
-matches. Only uncertain purchases remain for manual review. For this feature,
-descriptions and existing category labels are sent to Gemini through the server;
-summary generation continues to use aggregates. Keys remain on the backend.
+```sh
+cd LedgerCore
+swift test
+```
 
-## Daily sync and category review
+Also build both Debug simulator and Release device configurations after changing app wiring. An unsigned device build verifies compilation; it does not verify distribution signing or constitute a TestFlight upload.
 
-Signed-out users see the OAuth welcome screen; signed-in users retain the dashboard.
-Automatic Splitwise imports are limited to once per 24 hours per account, with a daily
-backend worker while the server is running. Pull-to-refresh and Settings → Sync now
-force an immediate import. Opening the app reads the latest backend data and performs
-an import only if due. Choosing categories or changing currency does not fetch Splitwise.
-
-Uncertain purchases appear in a dismissible review sheet and an Overview review card.
-Choices can be remembered; skipped purchases remain visibly pending. Selecting a
-category shows its expenses for the selected month. Category history rows also open
-month-specific expense lists, with personal shares that reconcile to the totals.
+See the [TestFlight checklist](../docs/testflight.md) before distributing.

@@ -64,6 +64,7 @@ struct MobileRequestError: LocalizedError {
     }
     static func request(_ path: String, method: String = "GET", body: Data? = nil,
                         authenticated: Bool = true) async throws -> Data {
+        guard !SimulatorDemo.enabled else { throw URLError(.notConnectedToInternet) }
         var request = URLRequest(url: try url(path), timeoutInterval: 90)
         request.httpMethod = method
         request.httpBody = body

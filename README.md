@@ -1,123 +1,90 @@
-> **Hosted beta:** Cloud Run + Firestore deployment and iPhone release settings are
-> documented in [the GCP deployment guide](deploy/gcp/README.md).
-> The backend can run independently of the developer’s Mac.
-
-> **Current integration:** Minto now includes a per-user Splitwise OAuth beta,
-> personal-share syncing, category review and separate currency views. See
-> [Splitwise beta setup and architecture](docs/splitwise-beta.md). The older
-> single-account CLI and Google Sheets prototype are retained below for reference.
-
 # Minto
 
-Make room for clarity. A personal spending app with live Google Sheets totals and
-on-demand Gemini summaries. The repository and internal module names retain their
-original identifiers so existing clones, signing settings and credentials keep working.
+**Your spending, in focus.** A native iPhone app that turns your personal share of Splitwise expenses into clear monthly trends, category breakdowns, and conversational insights.
 
-**Current focus: native iOS viewer for your manually maintained sheet.**
-The [iOS app setup and architecture](ios/README.md) describe the SwiftUI viewer,
-live read-only Sheets connection, interactive charts and on-demand Gemini summaries.
-Sheets refresh works without the backend. Gemini requires a backend key in `.env`
-and the app's Settings connection; Splitwise OAuth is independent and optional.
+Minto is running as a small hosted beta. Splitwise is the source of expenses; Google Sheets is no longer part of the active data flow. TestFlight distribution is being prepared.
 
-The original Splitwise ingestion scaffold below tracks **your share**, approved
-category rules and explicit review. Splitwise access remains unverified. The app
-currently uses the manually maintained sheet rather than that ingestion path.
+## See it in action
 
-Read [the architecture and flow map](docs/architecture.md) first.
+[![Minto simulator walkthrough](docs/media/minto-demo.gif)](docs/media/minto-demo.mp4)
 
-## Run locally
+[Watch or download the simulator video](https://github.com/ash010413/splitwise-ledger/raw/refs/heads/main/docs/media/minto-demo.mp4). All shown accounts and transactions are fictional. The demo runs offline; its AI responses are illustrative.
 
-Python 3.11 or newer:
+## What it does
+
+- Connect through Splitwise OAuth, with a secure session stored in the iPhone Keychain.
+- Track **your owed share**, regardless of who paid or entered the expense. Exclude settlements and deleted expenses.
+- Explore monthly or all-time spending, 3/6/12-month charts, and the transactions behind each category.
+- Apply saved category choices and deterministic rules first; use Gemini when those rules cannot decide.
+- Put unresolved historical purchases in **Others** after classification. Ask for your input on unclear new purchases.
+- Ask Minto for a readable summary and follow-up explanations. Summary responses never change financial records.
+- Sync daily and refresh manually with a pull gesture. Keep different currencies separate.
+
+Automatic classification can be wrong. Categories remain editable, and explicit user choices take priority over automation.
+
+## Architecture and data flow
+
+```mermaid
+flowchart LR
+    App["iPhone · SwiftUI + Charts"] -->|HTTPS + account session| API["Cloud Run · FastAPI"]
+    App -->|Browser sign-in| OAuth["Splitwise OAuth"]
+    OAuth -->|Backend callback| API
+    Scheduler["Cloud Scheduler · authenticated hourly check"] --> API
+    API -->|Daily incremental sync or manual refresh| Splitwise["Splitwise API"]
+    API <-->|Account-scoped ledger and sync state| DB["Cloud Firestore"]
+    Secrets["Secret Manager"] --> API
+    API -->|Unresolved descriptions + category definitions| Gemini["Gemini API"]
+    API -->|Category totals + summary conversation| Gemini
+```
+
+1. OAuth verifies the Splitwise identity on the backend. Provider tokens stay encrypted on the server; a one-time exchange gives the app its own session.
+2. The backend fetches expenses, normalizes each user's share, and updates records by source ID and revision. Repeated syncs do not duplicate purchases.
+3. Category rules run before Gemini. User corrections are revision checked and can optionally become remembered matching rules.
+4. Firestore persists each account's ledger, classification decisions, and sync cursor. The app reads this ledger and derives charts and transaction lists.
+5. An hourly scheduler checks eligibility; each account normally fetches Splitwise at most once per 24 hours. Pull to refresh requests an immediate sync.
+
+## Technical specifications
+
+| Layer | Implementation |
+| --- | --- |
+| iPhone | SwiftUI, Swift Charts, iOS 17+, Keychain, local display cache |
+| Backend | Python 3.11+, FastAPI, Authlib, decimal money arithmetic |
+| Hosting | Google Cloud Run, `us-central1`, HTTPS, scales to zero |
+| Persistence | Firestore Native mode; SQLite adapter for local development |
+| Scheduling | Cloud Scheduler with OIDC authentication |
+| Secrets | Google Secret Manager; no provider secrets in the app |
+| AI | Server-side Gemini category matching and on-demand summaries |
+| Deployment | Container build through Cloud Build and Artifact Registry |
+| Beta limits | Four account slots; one Cloud Run instance, 1 CPU / 512 MiB |
+
+Free-tier allowances help keep a small beta inexpensive; they are not a guarantee of zero charges. Account capacity is a limit, not an invitation system. Splitwise access also depends on the registered application's current API entitlement.
+
+## Categories
+
+Home · Car · Flights / Travel · Food / Dining · Groceries · Misc · Movie / Entertainment · Phone · AI · Badminton / Sports · Gym · Lux, plus **Others** for unresolved history. **Misc** means necessary spending or spending for others; **Lux** means discretionary purchases for yourself. Neither is a catch-all automatic guess. Full definitions and review behavior are in the [integration guide](docs/splitwise-beta.md).
+
+## Development
 
 ```sh
 python3 -m venv .venv
-.venv/bin/pip install -e '.[dev]'
-.venv/bin/python -m splitwise_ledger.cli init-local
+.venv/bin/pip install -r requirements.lock
+.venv/bin/pip install --no-deps -e .
+cp .env.example .env
+# Configure local credentials and callback before connecting an account.
+.venv/bin/uvicorn splitwise_ledger.api:create_app --factory --reload
 ```
 
-Register an OAuth application in the [Splitwise developer portal](https://secure.splitwise.com/apps).
-Use `http://127.0.0.1:8000/oauth/splitwise/callback` as the redirect URI if accepted.
-Edit the generated `.env` locally to set `SPLITWISE_CLIENT_ID` and
-`SPLITWISE_CLIENT_SECRET`. Do not paste secrets into chat or commit them.
+Never commit `.env`, financial exports, database files, or personal Xcode configuration. The hosted build uploads only an allowlisted backend build context.
 
 ```sh
-.venv/bin/uvicorn splitwise_ledger.api:create_app --factory --host 127.0.0.1 --no-access-log
+.venv/bin/pytest
+.venv/bin/ruff check src tests tools
+cd ios/LedgerCore
+swift test
 ```
 
-In a second terminal in this repository:
-
-```sh
-.venv/bin/python -m splitwise_ledger.cli connect
-# After authorizing in your browser:
-.venv/bin/python -m splitwise_ledger.cli sync
-```
-
-App endpoints require `Authorization: Bearer <APP_API_TOKEN>`. Local interactive API
-documentation is available at http://127.0.0.1:8000/docs; use its Authorize button.
-
-| Endpoint | Purpose |
-| --- | --- |
-| `POST /oauth/splitwise/start` | Create one-time browser connection URL |
-| `GET /oauth/splitwise/connect` | Bind browser state and redirect to Splitwise |
-| `GET /oauth/splitwise/callback` | Validate state and exchange authorization code |
-| `POST /sync` | Hook for Sync now or an external daily scheduler |
-| `GET /expenses?pending_only=true` | Review inbox |
-| `POST /expenses/{id}/review` | Choose category using current revision |
-| `GET /categories` | Allowed category values |
-| `GET /summary` | Monthly totals, separated by currency and category |
-
-Review example (body only):
-
-```json
-{
-  "revision": "revision-returned-by-expenses-endpoint",
-  "category": "Food / Dining",
-  "remember_rule": false
-}
-```
-
-Remembering a rule is optional and scoped to exact normalized description, group
-and currency. Review mixed purchases manually once allocations are implemented;
-do not force an ambiguous purchase into one category.
-
-## Verify
-
-```sh
-.venv/bin/pytest -q
-.venv/bin/ruff check src tests
-.venv/bin/ruff format --check src tests
-```
-
-Tests use a fake provider or mock HTTP transport and never contact real accounts.
-`requirements.lock` records the tested development environment. Install it for an
-exact environment, then install this package with `pip install -e . --no-deps`.
-
-## Current limits
-
-Single account and one backend worker only. Local bearer-token authentication is
-for development, not an App Store release. No Google Sheets authorization or writes,
-deployed scheduler, iOS app, push notifications, token auto-refresh, mixed-category
-allocations or production deletion reconciliation yet. The architecture document
-defines these next steps and the financial invariants they must preserve.
-
-## Public source, private data
-
-The repository includes only synthetic sample expenses. Keep your personal Sheet ID,
-summary-tab name, Gemini key, application token and OAuth secrets in the ignored
-`.env`, using `.env.example` as the template. Run:
-
-```sh
-.venv/bin/python tools/configure_ios_backend.py
-```
-
-This generates ignored, machine-specific Xcode configuration. The dashboard uses
-real sheet rows only; examples are never substituted when a refresh fails. Currency
-is intentionally USD and the twelve categories follow the documented personal
-schema. Months, totals, labels, category counts, chart hit targets and summary scope
-are data-driven. Configure the summary tab rather than editing a hardcoded year.
-
-Before publishing changes, audit reachable history without displaying secrets:
-
-```sh
-.venv/bin/python tools/check_public_history.py --env .env
-```
+- [Architecture, correctness, and security boundaries](docs/architecture.md)
+- [iOS setup and offline demo recording](ios/README.md)
+- [Splitwise integration and category policy](docs/splitwise-beta.md)
+- [Cloud deployment runbook](deploy/gcp/README.md)
+- [TestFlight readiness and remaining work](docs/testflight.md)

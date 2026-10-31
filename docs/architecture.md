@@ -1,160 +1,61 @@
-# Architecture and data correctness
+# Architecture
 
-## Current product direction
-
-The user now maintains the Google Sheet manually. The immediate deliverable is the
-native read-only iOS app under `ios/`, reading the existing shared Google Sheet
-directly over HTTPS. See `ios/README.md`. Splitwise ingestion and category
-automation below are retained as future design work, not prerequisites for the viewer.
-
-```mermaid
-flowchart LR
-    Manual[User updates Google Sheet] --> Sheet[Existing monthly summary and transactions]
-    Sheet --> Repository[SheetsLedgerRepository]
-    Repository --> Model[Main-actor view model]
-    Model --> Dashboard[Overview and category charts]
-    Model --> Settings[Monthly category totals]
-    Model -->|On demand: category aggregates only| Backend[Authenticated summary endpoint]
-    Backend --> Gemini[Gemini API]
-```
-
-Sheets refreshes on foreground entry, every 60 seconds while foreground and by
-pull-to-refresh. Strict CSV/schema/Decimal validation reconciles monthly totals
-before replacing the snapshot. Last successful data is cached offline. Activity
-and transaction fetching are currently disabled; Settings shows category totals by month.
-The AI summary receives aggregate data only, never transaction descriptions or
-friend identifiers; it cannot mutate spending records. A missing Gemini key does
-not prevent Sheets reads. The backend keeps the key server-side and the iOS app
-stores only its backend authentication token in device-only Keychain storage.
-
-## Scope
-
-A personal, single-account iOS expense tracker. Splitwise supplies transactions and
-your share; the backend owns review decisions; Google Sheets is a reporting view.
-No AI is required. No Splitwise expense is created, edited or settled by this app.
-
-```mermaid
-flowchart TD
-    User[User authorizes Splitwise] --> OAuth[Backend OAuth adapter]
-    OAuth --> Vault[Encrypted provider token]
-    Daily[Daily scheduler or Sync now] --> Sync[Sync service]
-    Vault --> Sync
-    Splitwise[Splitwise expense API] --> Sync
-    Sync --> Normalize[Normalize your owed_share]
-    Normalize --> DB[(SQLite transaction store)]
-    DB --> Rules[Explicit approved rules]
-    Rules -->|Unique match| Classified[Categorized expenses]
-    Rules -->|Unknown or conflict| Queue[Review inbox]
-    App[SwiftUI iOS app] -->|Revision checked decision| Queue
-    Queue --> Classified
-    Classified --> Projection[Sheets projection worker - planned]
-    Projection --> Sheet[Transactions tab and monthly summary]
-    DB --> API[Authenticated JSON API]
-    API --> App
-```
+Minto is a native iOS client backed by an account-scoped spending service. Splitwise supplies the source records. Firestore is the hosted system of record for normalized spending and category decisions. Google Sheets adapters remain in the codebase for legacy/local use and are outside the active hosted path.
 
 ## Boundaries
 
-- `domain.py`: pure monetary normalization, exact category names and rule evaluation.
-- `splitwise.py`: OAuth/provider calls and bounded incremental pagination.
-- `store.py`: atomic writes, stable IDs, decision history and optimistic review checks.
-- `api.py`: authentication, routes, service composition and single-worker sync exclusion.
-- `cli.py`: local configuration and hooks for connecting and scheduled sync requests.
-- Future Sheets adapter: retries and ID-based upserts. Native iOS app consumes the API.
+| Component | Responsibility |
+| --- | --- |
+| SwiftUI app | OAuth browser flow, Keychain session, charts, category drill-down, review, summaries |
+| Mobile API | Authentication, account isolation, sync orchestration, review validation, AI requests |
+| Splitwise adapter | Provider authorization and incremental expense retrieval |
+| Domain layer | Personal share, exclusion rules, category precedence, source revisions |
+| Firestore adapters | Durable account records, ledger pages, cursor, audit and operation leases |
+| Gemini adapter | Structured category suggestions and aggregate-based conversational summaries |
+| Cloud Scheduler | Authenticated wake-up; account timestamps determine whether a sync is due |
 
-SQLite is sufficient for the first single-user deployment. A hosted service with
-multiple workers should migrate to PostgreSQL, migrations, a durable job queue,
-database-backed sync leases and per-user identity. The current shared application
-token is a local development credential; do not embed it in a distributed iOS app.
+## Authentication
 
-## OAuth flow
+The app starts an OAuth attempt and retains a verifier. The browser completes Splitwise authorization through the backend callback. State, the browser cookie, and the native verifier bind the flow; a single-use exchange returns an opaque app session. Provider credentials never appear in the native callback URL. App sessions expire after 30 days and are stored in Keychain; the server stores session hashes and encrypted provider tokens.
 
-1. Register an application at https://secure.splitwise.com/apps with the callback
-   `http://127.0.0.1:8000/oauth/splitwise/callback` (if localhost callbacks are accepted).
-2. Store client credentials in the ignored local `.env`; the client secret stays server-side.
-3. An authenticated POST to `/oauth/splitwise/start` creates a 10-minute random state
-   and a connection URL. Opening it binds state to an HttpOnly SameSite cookie.
-4. Splitwise redirects to the callback. Validate state, expiry and browser cookie;
-   consume state once, exchange the code via Authlib, and verify the current user.
-5. Persist the encrypted provider token. Never return it to the app or logs.
-6. `/sync` verifies expense access. Connection alone does not prove expense access.
+Cloud mode exposes the mobile API, health check, OAuth callback, and authenticated scheduler route. Legacy static-token routes are not enabled there. Secret Manager injects provider and encryption credentials into the Cloud Run runtime.
 
-One connection attempt at a time is supported. Expired tokens require reconnecting
-in this version; automatic refresh/revocation handling is a later integration task.
-The encryption key must be backed up separately from the database. For deployment,
-use HTTPS, a secret manager, restricted database file permissions and no query-string
-logging at the reverse proxy. Run Uvicorn with `--no-access-log` locally.
+## Spending correctness
 
-## Sync and money
+- Use the authenticated user's `owed_share`, not the total bill, paid share, or net balance.
+- Ignore settlements/payments, debt consolidation, deleted records, and purchases with no personal share.
+- Upsert by expense ID and source revision. Edits and removals affect the normalized ledger on sync.
+- Use decimal arithmetic on the backend and client; transfer amounts as decimal strings.
+- Keep currencies separate; do not silently convert or combine them.
+- Include pending classification amounts in totals, visibly separated from categorized spending.
+- Reject stale review submissions rather than overwriting a newer source revision.
 
-- Select the connected user's `owed_share`, never `paid_share` or `net_balance`.
-- Missing/duplicate own shares or invalid monetary values fail the whole batch;
-  the cursor stays unchanged rather than quietly losing spending.
-- Use Decimal values, serialize amounts as strings, and keep currencies separate.
-- Exclude payment/settlement records, deletion tombstones and zero-share expenses.
-- Use the source expense date's calendar month for initial reporting. Confirm the
-  intended date/timezone policy against real transactions before historical import.
-- Fetch all pages within a fixed update-time window, overlapping the previous
-  successful cursor by five minutes. Commit the complete batch and cursor together.
-- Stable expense IDs make repeat syncs idempotent. A changed source fingerprint
-  invalidates human category approval. Unchanged records preserve decisions.
-- No records are removed merely because they are missing from a page. Deletion
-  tombstones are handled, but real-account deletion visibility, API sort stability
-  and pagination behavior still require verification. Add periodic reconciliation
-  before relying on unattended production reporting.
-- Backend sync runs independently of iOS background execution. Start with an
-  external daily scheduler invoking the authenticated `/sync` hook. No schedule is
-  installed or deployed by this scaffold.
+An incremental cursor and account operation lease coordinate manual and scheduled work. Firestore ledger updates atomically commit changed pages, cursor and audit state. Size guards fail before a partial oversized ledger commit. A version-checked cache reduces repeated reads without making container-local storage authoritative.
 
-## Categorization and review
+## Category decisions
 
-All twelve user categories are explicit enum values. Unknowns never become Misc.
-No merchant rules ship enabled. Human review can optionally remember an exact
-normalized description, group and currency combination. Conflicts require review.
-Remembered rules apply only to subsequently imported/changed records; they do not
-silently bulk-reclassify existing pending records. New rule management and preview
-will be added before large-scale rule use.
+Explicit human choices win. Remembered description/group/currency matches and clear deterministic rules precede Gemini. Conflicting or ambiguous evidence stays unresolved. Gemini receives bounded expense descriptions and source category labels with the category definitions; it does not receive friend identities, notes, amounts, or credentials for matching.
 
-Human decisions include the source revision. A stale review receives HTTP 409.
-Source changes and human decisions create append-only audit events. Pending
-amounts are visible in summaries, separate from confirmed category totals.
+Classification uses bounded batches with validated structured output. Failures remain queued for retry. Historical expenses that remain unclear after a valid AI decision enter Others, avoiding a large onboarding review queue. New unclear records request in-app review, including newly discovered backdated purchases. Others remains editable. Misc and Lux require their actual meaning, rather than serving as generic fallbacks.
 
-Future mixed purchases need category allocations whose sum equals your share.
-The initial API supports one category per transaction; mixed purchases should stay
-pending until allocation support exists. No model confidence threshold can establish
-correctness. If AI is added later, its output remains a suggestion requiring review.
+## Summaries
 
-## Sheets integration plan
+The app sends selected-period category totals, comparison totals when available, and the follow-up conversation to the authenticated analysis endpoint. The backend calls Gemini and briefly caches results per account and input fingerprint. The app renders lightweight Markdown as native text. Summaries are advisory and cannot update categories, expenses, or Splitwise.
 
-Use the configured summary tab and optional future Transactions tab. The current transaction columns
-are Date, Description, Category, My Share, Total Cost, Group / Friend and Expense ID.
-The integration must use the exact domain category names, positive consumption
-amounts for ordinary expenses, and Expense ID as the upsert key. Add currency,
-review status, source revision and source update time explicitly rather than
-guessing from existing values.
+## Hosting and operations
 
-Add a durable export outbox in the same database transaction as each accepted change.
-The Sheets worker retries failures and records the exported revision. Write literal
-values with Sheets RAW input mode, not formulas derived from transaction text.
-Keep pending records visibly pending; monthly formulas sum confirmed, active rows.
-The app must show failed/stale export status. Category decisions flow through the app
-API; direct Sheet editing and two-way conflict resolution are not in the first version.
+Cloud Run in `us-central1` uses request-based execution, zero minimum instances, and a maximum of one instance for the small beta. Firestore provides persistence across container restarts. An hourly OIDC-authenticated Cloud Scheduler request checks account timestamps; the Splitwise fetch interval is 24 hours unless the user forces a refresh. Bounded category work can continue on subsequent requests.
 
-Historical totals already exist in the sheet. Before any backfill, agree on a cutover
-date and reconcile a sample period. Never add a full historical import on top of
-manual summary totals. Refunds, gifts paid entirely for others and unusual shares
-need explicit handling validated against the user's recording convention.
+Dedicated runtime, scheduler, and build service accounts separate responsibilities. Runtime access is scoped to Firestore and the required secrets. Container builds use an allowlisted source context. No local account databases or `.env` files are included.
 
-## Delivery sequence
+Current capacity is four accounts. This is not an invite allowlist. Before expanding distribution, implement the lifecycle/privacy work in the [TestFlight checklist](testflight.md), validate friend onboarding, and establish backup/restore and operational monitoring appropriate to the audience.
 
-1. **Current:** local repo, OAuth adapter, authenticated sync hook, transaction store,
-   exact rules, review endpoints, monthly currency-separated summaries, automated tests.
-2. Verify actual OAuth and expenses access using the user's registered client.
-3. Add migration-managed persistence, Google Sheets authorization, export outbox,
-   deletion reconciliation, allocations and an agreed historical cutover.
-4. Build SwiftUI dashboard, transaction detail and review inbox, with secure app login,
-   Keychain session storage and sync/export status.
-5. Deploy backend plus daily scheduler; verify end-to-end reconciliation and backups.
+## Code map
 
-Provider reference: https://dev.splitwise.com/ and
-https://github.com/splitwise/api-docs/blob/main/splitwise.yaml
+- `src/splitwise_ledger/api.py`: application wiring and analysis API.
+- `mobile.py`: native OAuth/session, spending, sync, review and scheduler routes.
+- `domain.py`, `categorization.py`: financial normalization and category policy.
+- `firestore_accounts.py`, `firestore_ledger.py`: hosted persistence and concurrency.
+- `ios/LedgerApp`: native presentation, connection and review flows.
+- `ios/LedgerCore`: parsing, aggregation and chart period logic.
+- `tools/build_cloud_context.py`: deployment source allowlist.
