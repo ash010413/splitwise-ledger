@@ -34,3 +34,45 @@ swift test
 Also build both Debug simulator and Release device configurations after changing app wiring. An unsigned device build verifies compilation; it does not verify distribution signing or constitute a TestFlight upload.
 
 See the [TestFlight checklist](../docs/testflight.md) before distributing.
+
+## Reinstall on paired development iPhones
+
+`tools/reinstall_ios.py` builds a signed Release app using the existing Xcode account
+and signing configuration, checks the embedded provisioning profile and signature,
+and optionally installs over Minto on explicitly selected physical phones. It does
+not delete or launch the app. Device identifiers, signing records and logs stay in
+the ignored `data/ios-reinstall/` directory with private permissions.
+
+Run from the repository root:
+
+```sh
+python3 tools/reinstall_ios.py --list-devices
+# Exact device name or CoreDevice ID; without a mode this is a dry run.
+python3 tools/reinstall_ios.py --device 'Your iPhone name'
+python3 tools/reinstall_ios.py --device 'Your iPhone name' --build-only
+python3 tools/reinstall_ios.py --device 'Your iPhone name' --install
+# Select both explicitly when their devices are covered by the signing profile.
+python3 tools/reinstall_ios.py --device 'First iPhone' --device 'Second iPhone' --install
+```
+
+Keep the Mac awake and selected phones unlocked and reachable via USB or the paired
+home network. Devices must have Developer Mode enabled. Sign into the intended
+Apple account in Xcode first; register each phone by running the app from Xcode
+once if it is not covered by the existing profile. Use `--developer-dir` to select
+a different Xcode installation. Newer iOS versions can prevent device operations
+with older Xcode; successful pairing alone is not proof of install compatibility.
+
+**Reinstalling is not necessarily renewal.** Xcode may reuse a profile with its
+original expiry. The script reports the actual expiry, refuses profiles with less
+than 48 hours remaining by default, and only records successful installations.
+`--require-renewal` additionally refuses installation unless the profile expiry
+advanced beyond the last installation recorded by this script. A first run cannot
+prove renewal, because there is no prior recorded expiry. Missing device coverage,
+changed signing team, invalid signature and insufficient validity stop installation.
+Failures are reported with a nonzero exit status; offline phones can be retried by
+running the command again. The process lock prevents overlapping script runs.
+
+No recurring task is installed by this script. Before scheduling it, demonstrate
+that Xcode actually renews the profile near expiry. If it does not, resolve signing
+in Xcode manually; do not delete shared profiles or revoke certificates to force it.
+The script cannot guarantee unattended weekly renewal with free signing.
