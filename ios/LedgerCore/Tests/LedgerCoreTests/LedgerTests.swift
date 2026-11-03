@@ -113,3 +113,49 @@ import Foundation
     #expect(data.expenses(in: .dining, monthID: "2026-09").isEmpty)
     #expect(data.summary(for: "all")?.total == 65)
 }
+
+@Test func splitwiseCalendarUsesLocalDayAcrossMonthYearAndDSTBoundaries() throws {
+    let pacific = ExpenseCalendar(timeZone: TimeZone(identifier: "America/Los_Angeles")!)
+    // Oct 31 at 7 p.m. PDT is Nov 1 in UTC, but remains October spending locally.
+    #expect(try pacific.day(for: "2026-11-01T02:00:00Z") == "2026-10-31")
+    #expect(try pacific.day(for: "2026-11-01T02:00:00.123456Z") == "2026-10-31")
+    #expect(try pacific.day(for: "2026-10-31T19:00:00-07:00") == "2026-10-31")
+    #expect(try pacific.day(for: "2026-11-01T06:59:59Z") == "2026-10-31")
+    #expect(try pacific.day(for: "2026-11-01T07:00:00+00:00") == "2026-11-01")
+    // Both occurrences of 1:30 a.m. during the fall DST transition share a local day.
+    #expect(try pacific.day(for: "2026-11-01T08:30:00Z") == "2026-11-01")
+    #expect(try pacific.day(for: "2026-11-01T09:30:00Z") == "2026-11-01")
+    #expect(try pacific.day(for: "2027-01-01T03:00:00Z") == "2026-12-31")
+    let india = ExpenseCalendar(timeZone: TimeZone(identifier: "Asia/Kolkata")!)
+    #expect(try india.day(for: "2026-10-31T20:00:00Z") == "2026-11-01")
+    #expect(try pacific.day(for: "2026-11-01") == "2026-11-01")
+    #expect(try india.day(for: "2026-11-01") == "2026-11-01")
+    #expect(throws: SheetError.self) { try pacific.day(for: "2026-13-01") }
+    #expect(throws: SheetError.self) { try pacific.day(for: "not-a-date") }
+    #expect(throws: SheetError.self) { try pacific.day(for: "2026-11-01T02:00:00") }
+}
+
+@Test func localMonthTotalsAndDrillDownReconcileWithoutChangingSourceRecords() throws {
+    let source = #"""
+    {"expenses":[
+      {"id":1,"revision":"a","description":"Dinner","date":"2026-11-01T02:00:00Z","currency":"USD","my_share":"12.50","category":"Food / Dining"},
+      {"id":2,"revision":"b","description":"Unclear","date":"2026-11-01T07:00:00Z","currency":"USD","my_share":"7.25","category":null},
+      {"id":3,"revision":"c","description":"Groceries","date":"2026-10-31T23:30:00Z","currency":"USD","my_share":"5.00","category":"Groceries"}
+    ]}
+    """#
+    let response = try JSONDecoder().decode(SplitwiseSnapshot.self, from: Data(source.utf8))
+    let local = try response.dataset(currency: "USD", timeZone: TimeZone(identifier: "America/Los_Angeles")!)
+    #expect(local.months.map(\.id) == ["2026-10", "2026-11"])
+    #expect(local.summary(for: "2026-10")?.total == Decimal(string: "17.50"))
+    #expect(local.summary(for: "2026-11")?.total == Decimal(string: "7.25"))
+    #expect(local.summary(for: "2026-11")?.pendingAmount == Decimal(string: "7.25"))
+    #expect(local.entries.first { $0.id == "1" }?.day == "2026-10-31")
+    #expect(local.expenses(in: .dining, monthID: "2026-10").map(\.id) == ["1"])
+    #expect(local.expenses(in: .dining, monthID: "2026-11").isEmpty)
+    let utc = try response.dataset(currency: "USD", timeZone: TimeZone(secondsFromGMT: 0)!)
+    #expect(utc.summary(for: "2026-10")?.total == 5)
+    #expect(local.summary(for: "all")?.total == utc.summary(for: "all")?.total)
+    #expect(response.expenses[0].date == "2026-11-01T02:00:00Z")
+    #expect(response.expenses[0].revision == "a")
+    #expect(response.expenses[0].category == .dining)
+}

@@ -161,6 +161,44 @@ public extension Decimal {
     var chartValue: Double { NSDecimalNumber(decimal: self).doubleValue }
 }
 
+/// Interpret provider timestamps as instants, then assign them to the reporting calendar.
+/// Date-only values already describe a calendar day and must not shift across time zones.
+public struct ExpenseCalendar {
+    private let timestamp: ISO8601DateFormatter
+    private let fractionalTimestamp: ISO8601DateFormatter
+    private let localDay: DateFormatter
+    private let dateOnly: DateFormatter
+
+    public init(timeZone: TimeZone = .current) {
+        timestamp = ISO8601DateFormatter()
+        timestamp.formatOptions = [.withInternetDateTime]
+        fractionalTimestamp = ISO8601DateFormatter()
+        fractionalTimestamp.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        localDay = DateFormatter()
+        localDay.calendar = Calendar(identifier: .gregorian)
+        localDay.locale = Locale(identifier: "en_US_POSIX")
+        localDay.timeZone = timeZone
+        localDay.dateFormat = "yyyy-MM-dd"
+        dateOnly = DateFormatter()
+        dateOnly.calendar = Calendar(identifier: .gregorian)
+        dateOnly.locale = Locale(identifier: "en_US_POSIX")
+        dateOnly.timeZone = TimeZone(secondsFromGMT: 0)
+        dateOnly.dateFormat = "yyyy-MM-dd"
+        dateOnly.isLenient = false
+    }
+
+    public func day(for source: String) throws -> String {
+        if source.count == 10, let date = dateOnly.date(from: source),
+           dateOnly.string(from: date) == source {
+            return source
+        }
+        guard let date = fractionalTimestamp.date(from: source) ?? timestamp.date(from: source) else {
+            throw SheetError.invalid("Splitwise returned an invalid expense date.")
+        }
+        return localDay.string(from: date)
+    }
+}
+
 /// Normalized personal shares from the authenticated backend, never total paid or net balances.
 public struct SplitwiseExpense: Decodable, Identifiable, Sendable {
     public let id: Int
@@ -182,16 +220,15 @@ public struct SplitwiseSnapshot: Decodable, Sendable {
     public let category_warning: String?
     public let sync_warning: String?
 
-    public func dataset(currency: String) throws -> LedgerDataset {
+    public func dataset(currency: String, timeZone: TimeZone = .current) throws -> LedgerDataset {
         let rows = expenses.filter { $0.currency == currency }
+        let calendar = ExpenseCalendar(timeZone: timeZone)
         var amounts: [String: [SpendCategory: Decimal]] = [:]
         var pending: [String: Decimal] = [:]
         var entries: [LedgerEntry] = []
         for row in rows {
-            let month = String(row.date.prefix(7))
-            guard month.range(of: #"^[0-9]{4}-(0[1-9]|1[0-2])$"#, options: .regularExpression) != nil else {
-                throw SheetError.invalid("Splitwise returned an invalid expense month.")
-            }
+            let day = try calendar.day(for: row.date)
+            let month = String(day.prefix(7))
             let share = try SheetParser.money(row.my_share)
             if amounts[month] == nil {
                 amounts[month] = Dictionary(uniqueKeysWithValues: SpendCategory.allCases.map { ($0, Decimal.zero) })
@@ -199,7 +236,7 @@ public struct SplitwiseSnapshot: Decodable, Sendable {
             if let category = row.category { amounts[month]![category, default: 0] += share }
             else { pending[month, default: 0] += share }
             entries.append(LedgerEntry(id: String(row.id), description: row.description,
-                                       day: String(row.date.prefix(10)), monthID: month,
+                                       day: day, monthID: month,
                                        category: row.category, share: share, note: "Your Splitwise share"))
         }
         let formatter = DateFormatter()

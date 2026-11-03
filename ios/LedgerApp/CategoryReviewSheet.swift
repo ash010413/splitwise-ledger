@@ -29,7 +29,7 @@ struct CategoryReviewSheet: View {
                             Text(expense.description).font(.title3.bold())
                             Text((Decimal(string: expense.my_share)?.money(expense.currency)) ?? "Amount unavailable")
                                 .font(.system(.title, design: .rounded).weight(.semibold))
-                            Text("\(String(expense.date.prefix(10))) · your share · \(expense.currency)")
+                            Text("\((try? ExpenseCalendar().day(for: expense.date)) ?? "Date unavailable") · your share · \(expense.currency)")
                                 .font(.caption).foregroundStyle(.secondary)
                         }.padding(20).frame(maxWidth: .infinity, alignment: .leading)
                             .background(.white, in: RoundedRectangle(cornerRadius: 22))

@@ -7,10 +7,10 @@ struct ExpenseReviewView: View {
     @State private var month = "all"
     @State private var reviewing = false
 
-    private var filtered: [SplitwiseExpense] {
+    private func filtered(days: [String: String]) -> [SplitwiseExpense] {
         model.expenses.filter {
             $0.currency == model.currencyCode &&
-            (month == "all" || $0.date.hasPrefix(month)) &&
+            (month == "all" || days[String($0.id)]?.hasPrefix(month) == true) &&
             (filter != "Needs review" || ($0.category == nil && $0.review_required != false)) &&
             (filter != "Others" || $0.category == .others) &&
             (search.isEmpty || $0.description.localizedCaseInsensitiveContains(search) ||
@@ -28,8 +28,10 @@ struct ExpenseReviewView: View {
     }
 
     var body: some View {
-        let rows = filtered
-        let grouped = Dictionary(grouping: rows) { String($0.date.prefix(10)) }
+        // Use the same calendar days that produced Overview and category totals.
+        let days = Dictionary(uniqueKeysWithValues: (model.data?.entries ?? []).map { ($0.id, $0.day) })
+        let rows = filtered(days: days)
+        let grouped = Dictionary(grouping: rows) { days[String($0.id)] ?? "Date unavailable" }
         NavigationStack {
             List {
                 Section {

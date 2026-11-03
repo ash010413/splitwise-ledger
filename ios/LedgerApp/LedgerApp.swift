@@ -113,7 +113,11 @@ final class LedgerModel {
     var currencyCode: String { useSplitwise ? (data?.months.first?.currency ?? currency) : "USD" }
     private var cacheURL: URL {
         let identity = useSplitwise ? "splitwise-\(MobileCredential.identity)-\(currency)" : "sheets-\(SheetConnection.cacheKey)"
-        return URL.cachesDirectory.appending(path: "ledger-\(identity).json")
+        // Old snapshots grouped by UTC prefixes. Also isolate caches after a timezone change.
+        let calendarKey = SHA256.hash(data: Data(TimeZone.current.identifier.utf8))
+            .map { String(format: "%02x", $0) }.joined()
+        let version = useSplitwise ? "local-calendar-v2-\(calendarKey)-" : ""
+        return URL.cachesDirectory.appending(path: "ledger-\(version)\(identity).json")
     }
     private let repository: any LedgerRepository
     init(repository: (any LedgerRepository)? = nil) {

@@ -27,6 +27,7 @@ Cloud mode exposes the mobile API, health check, OAuth callback, and authenticat
 - Upsert by expense ID and source revision. Edits and removals affect the normalized ledger on sync.
 - Use decimal arithmetic on the backend and client; transfer amounts as decimal strings.
 - Keep currencies separate; do not silently convert or combine them.
+- Preserve provider timestamps on the backend. The iPhone converts timestamped expenses to its current timezone before assigning calendar days and months; date-only values remain unchanged. Overview, category drill-down and expense filters use those same local days. Splitwise display caches are versioned and scoped to timezone.
 - Include pending classification amounts in totals, visibly separated from categorized spending.
 - Reject stale review submissions rather than overwriting a newer source revision.
 
