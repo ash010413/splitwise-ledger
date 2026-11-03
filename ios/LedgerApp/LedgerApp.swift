@@ -445,14 +445,29 @@ struct DashboardView: View {
             }.foregroundStyle(.white.opacity(0.75))
             Text(month.total.money(model.currencyCode)).font(.system(size: 43, weight: .medium, design: .rounded))
                 .minimumScaleFactor(0.6).lineLimit(1).accessibilityIdentifier("monthlyTotal")
-            if let previous = model.previous, previous.total > 0 {
-                let delta = (month.total - previous.total) / previous.total
+            if let comparison = model.data?.spendingComparison(for: month.id), let previous = model.previous {
+                let delta = comparison.percentageChange
                 HStack(spacing: 7) {
-                    Image(systemName: delta < 0 ? "arrow.down.right" : "arrow.up.right")
-                    Text("\(abs(delta.chartValue).formatted(.percent.precision(.fractionLength(1)))) \(delta < 0 ? "less" : "more") than \(previous.label)")
+                    Image(systemName: comparison.current == comparison.previous ? "equal" :
+                            comparison.current < comparison.previous ? "arrow.down.right" : "arrow.up.right")
+                    if let delta {
+                        Text(delta == 0 ? "Same spending as last month" :
+                             "\(abs(delta.chartValue).formatted(.percent.precision(.fractionLength(1)))) \(delta < 0 ? "less" : "more") than \(previous.label)")
+                    } else if comparison.amountChange == 0 {
+                        Text("Same spending as last month")
+                    } else {
+                        Text("\(abs(comparison.amountChange).money(model.currencyCode)) \(comparison.amountChange < 0 ? "less" : "more") than \(previous.label)")
+                    }
                 }.font(.subheadline).foregroundStyle(Color(red: 0.76, green: 0.88, blue: 0.65))
-                Text("Calendar-month totals · periods may be incomplete")
-                    .font(.caption2).foregroundStyle(.white.opacity(0.65))
+                if let currentDay = comparison.currentThrough, let previousDay = comparison.previousThrough {
+                    Text("Through \(month.label.prefix(3)) \(Int(currentDay.suffix(2)) ?? 0): \(comparison.current.money(model.currencyCode)) · \(previous.label.prefix(3)) \(Int(previousDay.suffix(2)) ?? 0): \(comparison.previous.money(model.currencyCode))")
+                        .font(.caption2).foregroundStyle(.white.opacity(0.75))
+                    Text("Month-to-date · includes both cutoff dates")
+                        .font(.caption2).foregroundStyle(.white.opacity(0.65))
+                } else {
+                    Text("Full calendar months · based on recorded expenses")
+                        .font(.caption2).foregroundStyle(.white.opacity(0.65))
+                }
             } else {
                 Text(month.id == "all" ? "Across all \(model.data?.months.count ?? 0) loaded months" : "Your share across all categories").font(.subheadline).foregroundStyle(.white.opacity(0.75))
             }

@@ -159,3 +159,62 @@ import Foundation
     #expect(response.expenses[0].revision == "a")
     #expect(response.expenses[0].category == .dining)
 }
+
+@Test func monthToDateComparisonExcludesLaterPurchasesAndIncludesPendingShares() throws {
+    let source = #"""
+    {"expenses":[
+      {"id":1,"revision":"a","description":"October","date":"2026-10-02","currency":"USD","my_share":"20","category":null},
+      {"id":2,"revision":"b","description":"Later October","date":"2026-10-15","currency":"USD","my_share":"100","category":"Home"},
+      {"id":3,"revision":"c","description":"November","date":"2026-11-02","currency":"USD","my_share":"10","category":"Home"},
+      {"id":4,"revision":"d","description":"Future November","date":"2026-11-03","currency":"USD","my_share":"80","category":"Home"}
+    ]}
+    """#
+    let utc = TimeZone(secondsFromGMT: 0)!
+    let snapshot = try JSONDecoder().decode(SplitwiseSnapshot.self, from: Data(source.utf8))
+    let data = try snapshot.dataset(currency: "USD", timeZone: utc)
+    let now = ISO8601DateFormatter().date(from: "2026-11-02T12:00:00Z")!
+    let comparison = data.spendingComparison(for: "2026-11", now: now, timeZone: utc)!
+    #expect(comparison.current == 10)
+    #expect(comparison.previous == 20)
+    #expect(comparison.percentageChange == Decimal(string: "-0.5"))
+    #expect(comparison.previousThrough == "2026-10-02")
+    let evening = ISO8601DateFormatter().date(from: "2026-11-03T02:00:00Z")!
+    let localComparison = data.spendingComparison(for: "2026-11", now: evening,
+        timeZone: TimeZone(identifier: "America/Los_Angeles")!)!
+    #expect(localComparison.currentThrough == "2026-11-02")
+    #expect(localComparison.current == 10)
+    #expect(data.spendingComparison(for: "all", now: now, timeZone: utc) == nil)
+}
+
+@Test func comparisonClampsShortMonthsAndHandlesMissingOrZeroBaseline() {
+    let utc = TimeZone(secondsFromGMT: 0)!
+    let months = [MonthSnapshot(id: "2024-02", label: "February", amounts: [:]),
+                  MonthSnapshot(id: "2024-03", label: "March", amounts: [.home: 10])]
+    let entry = LedgerEntry(id: "1", description: "Rent", day: "2024-03-01", monthID: "2024-03",
+                            category: .home, share: 10, note: "")
+    let data = LedgerDataset(months: months, entries: [entry], isPreview: false)
+    let now = ISO8601DateFormatter().date(from: "2024-03-31T12:00:00Z")!
+    let comparison = data.spendingComparison(for: "2024-03", now: now, timeZone: utc)!
+    #expect(comparison.previousThrough == "2024-02-29")
+    #expect(comparison.percentageChange == nil)
+    #expect(data.spendingComparison(for: "2024-02", now: now, timeZone: utc) == nil)
+    let past = data.spendingComparison(for: "2024-03", now: now.addingTimeInterval(86400), timeZone: utc)!
+    #expect(past.currentThrough == nil)
+    #expect(past.current == 10)
+}
+
+
+@Test func zeroBaselineUsesDollarDifferenceWithoutInventingAPercentage() {
+    let higher = SpendingComparison(current: 50, previous: 0, currentThrough: "2026-11-02",
+                                    previousThrough: "2026-10-02")
+    #expect(higher.percentageChange == nil)
+    #expect(higher.amountChange == 50)
+    let empty = SpendingComparison(current: 0, previous: 0, currentThrough: "2026-11-02",
+                                   previousThrough: "2026-10-02")
+    #expect(empty.percentageChange == nil)
+    #expect(empty.amountChange == 0)
+    let credit = SpendingComparison(current: 10, previous: -5, currentThrough: nil,
+                                    previousThrough: nil)
+    #expect(credit.percentageChange == nil)
+    #expect(credit.amountChange == 15)
+}

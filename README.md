@@ -17,6 +17,7 @@ Minto is running as a small hosted beta. Splitwise is the source of expenses; Go
 - Explore monthly or all-time spending, 3/6/12-month charts, and the transactions behind each category.
 - Apply saved category choices and deterministic rules first; use Gemini when those rules cannot decide.
 - Put unresolved historical purchases in **Others** after classification. Ask for your input on unclear new purchases.
+- Compare current month-to-date spending with the same cutoff day last month; closed months use full-month comparisons.
 - Ask Minto for a readable summary and follow-up explanations. Summary responses never change financial records.
 - Sync daily and refresh manually with a pull gesture. Keep different currencies separate.
 

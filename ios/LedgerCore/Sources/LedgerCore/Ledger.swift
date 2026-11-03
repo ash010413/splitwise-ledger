@@ -86,6 +86,36 @@ public struct LedgerDataset: Sendable, Codable {
         let previousID = String(format: "%04d-%02d", components.year!, components.month!)
         return months.first { $0.id == previousID }
     }
+    /// Match the current local day against the previous month, clamping shorter months.
+    /// Closed months retain full-month comparisons; aggregate-only sources cannot supply MTD.
+    public func spendingComparison(for selection: String, now: Date = Date(),
+                                   timeZone: TimeZone = .current) -> SpendingComparison? {
+        guard let current = summary(for: selection),
+              let previous = previousMonth(before: selection) else { return nil }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        let parts = calendar.dateComponents([.year, .month, .day], from: now)
+        let currentID = String(format: "%04d-%02d", parts.year!, parts.month!)
+        guard selection <= currentID else { return nil }
+        if selection < currentID {
+            return SpendingComparison(current: current.total, previous: previous.total,
+                                      currentThrough: nil, previousThrough: nil)
+        }
+        guard !entries.isEmpty else { return nil }
+        let priorParts = previous.id.split(separator: "-").compactMap { Int($0) }
+        guard let priorStart = calendar.date(from: DateComponents(year: priorParts[0],
+                                                                  month: priorParts[1], day: 1)),
+              let days = calendar.range(of: .day, in: .month, for: priorStart) else { return nil }
+        let today = String(format: "%@-%02d", selection, parts.day!)
+        let priorDay = String(format: "%@-%02d", previous.id, min(parts.day!, days.count))
+        func total(_ month: String, through day: String) -> Decimal {
+            entries.filter { $0.monthID == month && $0.day <= day }.reduce(0) { $0 + $1.share }
+        }
+        return SpendingComparison(current: total(selection, through: today),
+                                  previous: total(previous.id, through: priorDay),
+                                  currentThrough: today, previousThrough: priorDay)
+    }
+
     public func summary(for selection: String) -> MonthSnapshot? {
         guard selection == "all" else { return months.first { $0.id == selection } }
         guard !months.isEmpty else { return nil }
@@ -96,6 +126,15 @@ public struct LedgerDataset: Sendable, Codable {
                              pendingAmount: months.reduce(Decimal.zero) { $0 + ($1.pendingAmount ?? 0) },
                              currency: months.first?.currency)
     }
+}
+
+public struct SpendingComparison: Sendable {
+    public let current: Decimal
+    public let previous: Decimal
+    public let currentThrough: String?
+    public let previousThrough: String?
+    public var amountChange: Decimal { current - previous }
+    public var percentageChange: Decimal? { previous > 0 ? amountChange / previous : nil }
 }
 
 /// Resolve the nearest bar center for a direct tap. Independent of previous selection state.
