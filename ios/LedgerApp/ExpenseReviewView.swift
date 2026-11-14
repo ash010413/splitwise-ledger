@@ -6,6 +6,7 @@ struct ExpenseReviewView: View {
     @State private var filter = "All"
     @State private var month = "all"
     @State private var reviewing = false
+    @State private var remember = true
 
     private func filtered(days: [String: String]) -> [SplitwiseExpense] {
         model.expenses.filter {
@@ -122,11 +123,13 @@ struct ExpenseReviewView: View {
                         Button(category.rawValue, systemImage: category.symbol) {
                             Task {
                                 reviewing = true
-                                await model.review(expense, category: category, remember: false)
+                                await model.review(expense, category: category, remember: remember)
                                 reviewing = false
                             }
                         }
                     }
+                    Divider()
+                    Toggle("Remember for matching descriptions", isOn: $remember)
                 } label: {
                     HStack(spacing: 4) {
                         Text(expense.category?.rawValue ?? (expense.review_required == false ? "Matching category…" : "Needs review"))

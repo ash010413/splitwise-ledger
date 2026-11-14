@@ -6,7 +6,7 @@ struct CategoryReviewSheet: View {
     @State private var queue: [SplitwiseExpense]
     @State private var completed = 0
     @State private var isSaving = false
-    @State private var remember = false
+    @State private var remember = true
 
     init(model: LedgerModel, expenses: [SplitwiseExpense]) {
         self.model = model
