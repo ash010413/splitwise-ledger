@@ -2,6 +2,8 @@
 
 Native SwiftUI and Swift Charts client, targeting iOS 17+. Open `LedgerApp.xcodeproj` in Xcode and select the **Ledger** scheme. Choose your development team before building on a device. Preserve your local signing settings.
 
+Installing on your own iPhone for the first time? Follow the [step-by-step beginner installation guide](../README.md#install-on-your-iphone--no-coding-experience-needed), including cable connection, free Apple signing, and weekly reinstalls. The sections below cover development and optional tooling.
+
 ## Configuration
 
 `Configuration.xcconfig` includes the public `Production.xcconfig` and an optional ignored `Development.local.xcconfig`. Release uses the production configuration. The backend address is public configuration; Splitwise and Gemini secrets belong only on the backend.

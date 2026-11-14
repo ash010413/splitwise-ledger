@@ -650,6 +650,7 @@ struct SettingsView: View {
                 } header: { Text("Spending data") } footer: {
                     Text("Updated daily. Pull to refresh anytime. Amounts show your share in the selected currency.")
                 }
+                AppSigningSection()
                 Section("Categories") {
                     ForEach(SpendCategory.allCases) { category in
                         NavigationLink {
@@ -685,6 +686,40 @@ struct SettingsView: View {
                 }
         }.tint(teal)
     }
+}
+
+private struct AppSigningSection: View {
+    var body: some View {
+        Section {
+            LabeledContent("Signing expires") {
+                if let expiry = Self.expirationDate {
+                    Text(expiry.formatted(date: .abbreviated, time: .shortened))
+                        .multilineTextAlignment(.trailing)
+                } else {
+                    Text("Unavailable for this build")
+                }
+            }.font(.subheadline)
+        } header: {
+            Text("App signing")
+        } footer: {
+            if Self.expirationDate != nil {
+                Text("Rebuild and reinstall before this date to keep using the app.")
+            }
+        }
+    }
+
+    // Cache the bundled profile's actual expiry; Settings redraws do no file work.
+    private static let expirationDate: Date? = {
+        guard let url = Bundle.main.url(forResource: "embedded", withExtension: "mobileprovision"),
+              let profile = try? Data(contentsOf: url, options: .mappedIfSafe),
+              profile.count <= 2_000_000,
+              let start = profile.range(of: Data("<?xml".utf8)),
+              let end = profile.range(of: Data("</plist>".utf8), in: start.lowerBound..<profile.endIndex),
+              let values = (try? PropertyListSerialization.propertyList(
+                from: profile[start.lowerBound..<end.upperBound], format: nil)) as? [String: Any]
+        else { return nil }
+        return values["ExpirationDate"] as? Date
+    }()
 }
 
 /// Freeze the requested figures so background refresh cannot relabel an old AI result.
